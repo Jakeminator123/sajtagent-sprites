@@ -1,0 +1,14 @@
+---
+description: Security and ownership boundary for Sajtagent Sprites
+alwaysApply: true
+---
+
+# Sajtagent Sprites
+
+Read and follow `/AGENTS.md`.
+
+- This repository owns privileged agent and Sprite execution, not the web UI.
+- OpenClaw is private behind a narrow, signed controller API.
+- Tool authority is server-owned, job-scoped, short-lived, and auditable.
+- Customer code executes in isolated secret-free workers.
+- Prefer one bounded verified loop over speculative orchestration layers.

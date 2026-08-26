@@ -1,0 +1,12 @@
+---
+description: Main branch, worktree safety, and final response status
+alwaysApply: true
+---
+
+# Git workflow
+
+- `main` is the standard branch.
+- If the user says `master`, ask whether they really mean `master` before acting.
+- Never remove a dirty, locked, unpushed, active-PR, running, or unique worktree.
+- End every final response with `Branch: <branch>` and `Worktree: <absolute path>`.
+- If several repositories were touched, report one branch/worktree pair per repository.
