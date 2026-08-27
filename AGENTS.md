@@ -21,3 +21,13 @@
 - End every final response with this repository's live branch and absolute
   worktree path. If several repositories were touched, report each one.
 - Never remove dirty, locked, unpushed, active-PR, or unique worktrees.
+
+## Change workflow
+
+- Treat `NOTES.md` and imported architecture reports as proposals, not runtime
+  contracts.
+- Begin with one typed SiteAgent-to-runtime job and one bounded
+  read/edit/check/preview loop. Do not scaffold future services before that
+  slice has a real caller and verification evidence.
+- When an implementation replaces a temporary or legacy path, remove the old
+  path or document its authority, owner, and measurable removal trigger.

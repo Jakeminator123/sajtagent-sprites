@@ -1,0 +1,14 @@
+---
+description: Thin-first Sprite runtime implementation workflow
+alwaysApply: true
+---
+
+# Change workflow
+
+- Treat `NOTES.md` and external reports as proposals, not contracts.
+- Start with one typed job and one bounded read/edit/check/preview loop.
+- Do not pre-create services, packages, brokers, or provider layers without a
+  real caller and acceptance evidence.
+- Tool denial, timeout, cancellation, and false-success prevention are part of
+  the first implementation, not later polish.
+- Remove replaced paths or document their authority, owner, and removal trigger.

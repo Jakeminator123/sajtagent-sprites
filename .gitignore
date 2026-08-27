@@ -8,3 +8,5 @@ coverage/
 __pycache__/
 *.py[cod]
 *.log
+desktop.ini
+.sprite
