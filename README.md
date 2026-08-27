@@ -22,3 +22,10 @@ SiteAgent web product
 No runtime implementation has been selected yet. Add the first package and
 source layout only with the first verified vertical slice, rather than creating
 an empty framework in advance.
+
+## Local environment
+
+Use the Git-ignored `.env.local` for runtime secrets and `.env.example` as the
+tracked name-only contract. Model-provider, Sprite, OpenClaw, and controller
+signing credentials belong here and must never be copied into the SiteAgent
+frontend or platform control panel.
