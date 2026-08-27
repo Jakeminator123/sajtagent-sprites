@@ -9,6 +9,17 @@ checkpoints, deterministic checks, and preview runtime.
 It does not own SiteAgent's web UI, users, product database, project pages, or
 Vercel publication controls. Those belong in `sajtagent-site`.
 
+## Canonical repository family
+
+- This repository is the only active privileged Sajtagent runtime repository.
+- GitHub: [`Jakeminator123/sajtagent-sprites`](https://github.com/Jakeminator123/sajtagent-sprites), branch `main`.
+- The SiteAgent web product and its Vercel project live in [`sajtagent-site`](https://github.com/Jakeminator123/sajtagent-site).
+- Cross-repository decisions live in [`sajtagent-platform`](https://github.com/Jakeminator123/sajtagent-platform).
+
+Do not deploy this repository as the SiteAgent frontend. The legacy
+`builder-v2` repository is not an OpenClaw or Sprite runtime and must not
+receive runtime credentials.
+
 ## Initial boundary
 
 ```text
