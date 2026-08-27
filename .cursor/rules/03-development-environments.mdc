@@ -1,0 +1,15 @@
+---
+description: Windows development and Linux Sprite-runtime portability
+alwaysApply: true
+---
+
+# Environment boundary
+
+- Default host instructions to Windows PowerShell 7 and label them clearly.
+- Use Git Bash only for explicitly labeled Bash/POSIX-compatible local work.
+- The real Sprite runtime is Linux/Bash with case-sensitive paths and no
+  Windows drive letters, `.cmd` executables, or PowerShell assumption.
+- Use UTF-8 without BOM and LF for shared source and every runtime file.
+- Use CRLF only for Windows-only `.ps1`, `.cmd`, and `.bat` entrypoints.
+- Prefer portable TypeScript/Python path and process APIs over shell glue.
+- Verify runtime behavior in Linux CI and, when authorized, a disposable Sprite.

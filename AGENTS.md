@@ -31,3 +31,13 @@
   slice has a real caller and verification evidence.
 - When an implementation replaces a temporary or legacy path, remove the old
   path or document its authority, owner, and measurable removal trigger.
+
+## Development and runtime environments
+
+- The developer host is Windows with PowerShell 7 by default. Label Git Bash
+  commands explicitly; Git Bash is optional compatibility, not Linux proof.
+- Sprites run Linux/Bash. Runtime code must use case-sensitive paths, no Windows
+  drive letters or `.cmd` assumptions, UTF-8 without BOM, and LF endings.
+- Use CRLF only for Windows-only `.ps1`, `.cmd`, and `.bat` entrypoints.
+- Codex/Cursor roles are development helpers only. Deployed product agents use
+  server-side OpenAI/Anthropic provider adapters and runtime-managed secrets.
