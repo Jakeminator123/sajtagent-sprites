@@ -52,6 +52,9 @@
   split. Ask Jakob when materially different options remain roughly 50/50.
 - Never overwrite, discard, stage, commit, or rewrite another agent's changes
   without agreement. Recheck status and diff immediately before staging.
+- `/kom <agent-or-task> <message>` contacts an existing agent through the
+  available direct channel. It never creates a new agent and uses a secret-free
+  local coordination note only when live delivery is unavailable.
 
 ## Change workflow
 
