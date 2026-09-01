@@ -297,7 +297,6 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
               job.executionPolicy.capabilities.includes("browser.inspect") &&
               job.executionPolicy.network.mode === "allowlist",
           },
-          incognito: true,
           visibility: "draft",
           cwd: workspace.workerDir,
         })
