@@ -3,6 +3,7 @@
   "include": [
     "contracts/**/*.ts",
     "src/**/*.ts",
-    "scripts/verify-local-runtime.mts"
+    "scripts/verify-local-runtime.mts",
+    "scripts/materialize-openclaw-profile.mts"
   ]
 }

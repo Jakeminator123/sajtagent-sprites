@@ -30,6 +30,18 @@ structured host configuration. These are portable inputs, not proof that the
 host granted every requested capability. The effective policy is always the
 intersection of the profile request and the server-owned host ceiling.
 
+Materialize the default profile, or an Agent Studio export, into a concrete
+OpenClaw workspace with:
+
+```powershell
+npm run profile:materialize -- --output <workspace>
+npm run profile:materialize -- --output <workspace> --profile <export.json>
+```
+
+The command overwrites only the known profile files and never deletes the
+target workspace. `.siteagent-profile-v1.json` records the compiled profile,
+effective policy, findings, and host configuration without credentials.
+
 ## Official sources
 
 - [Sprites remote MCP server](https://docs.sprites.dev/integrations/remote-mcp/)

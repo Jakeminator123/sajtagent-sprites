@@ -1,5 +1,8 @@
 import { strict as assert } from "node:assert"
 import { randomUUID } from "node:crypto"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import {
   DEFAULT_AGENT_PROFILE_V1,
@@ -13,12 +16,24 @@ import {
   SIGNATURE_HEADERS_V1,
   signRuntimeRequestV1,
 } from "../src/signing.ts"
+import { materializeOpenClawProfileV1 } from "../src/materialize-profile.ts"
 
 const signingKey = "local-test-key-that-is-at-least-32-characters-long"
 const allowedOrigin = "http://localhost:3000"
 assert(
   resolveRuntimeServerOptions({}).allowedOrigins.includes("http://127.0.0.1:3147"),
 )
+const profileOutput = await mkdtemp(join(tmpdir(), "siteagent-openclaw-profile-"))
+try {
+  await materializeOpenClawProfileV1({ outputDir: profileOutput })
+  assert.match(await readFile(join(profileOutput, "SOUL.md"), "utf8"), /Sajtagenten/)
+  assert.match(
+    await readFile(join(profileOutput, "profiles", "openclaw.yml"), "utf8"),
+    /workspaceOnly: true/,
+  )
+} finally {
+  await rm(profileOutput, { recursive: true, force: true })
+}
 const server = createRuntimeServer({
   host: "127.0.0.1",
   port: 0,
@@ -140,7 +155,7 @@ try {
   })
   assert.equal(replayed.status, 409)
 
-  console.log("PASS local runtime: 10 assertions")
+  console.log("PASS local runtime: 12 assertions")
 } finally {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
