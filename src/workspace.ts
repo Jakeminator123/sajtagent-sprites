@@ -42,7 +42,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
     encoding: "utf8",
     windowsHide: true,
   })
-  return stdout.trim()
+  return stdout.trimEnd()
 }
 
 async function requireContainedPath(root: string, candidate: string): Promise<void> {
@@ -184,12 +184,7 @@ export async function inspectBuildWorkspaceV1(
     "--porcelain=v1",
     "--untracked-files=all",
   ])
-  const changedPaths = porcelain
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => line.slice(3))
-    .map((path) => (path.includes(" -> ") ? path.split(" -> ").at(-1) || path : path))
-    .sort()
+  const changedPaths = parseGitStatusPathsV1(porcelain)
 
   const digest = createHash("sha256").update(`${workspace.baseCommit}\0`)
   for (const path of changedPaths) {
@@ -206,6 +201,15 @@ export async function inspectBuildWorkspaceV1(
     changedPaths,
     candidateRevisionId: `candidate:${digest.digest("hex")}`,
   }
+}
+
+export function parseGitStatusPathsV1(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.slice(3))
+    .map((path) => (path.includes(" -> ") ? path.split(" -> ").at(-1) || path : path))
+    .sort()
 }
 
 export async function findPreviewArtifactV1(

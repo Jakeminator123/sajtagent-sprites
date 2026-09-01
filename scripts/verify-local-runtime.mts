@@ -19,8 +19,13 @@ import {
   signRuntimeRequestV1,
 } from "../src/signing.ts"
 import { materializeOpenClawProfileV1 } from "../src/materialize-profile.ts"
+import { parseGitStatusPathsV1 } from "../src/workspace.ts"
 
 const signingKey = "local-test-key-that-is-at-least-32-characters-long"
+assert.deepEqual(parseGitStatusPathsV1(" M index.html\n?? preview.html"), [
+  "index.html",
+  "preview.html",
+])
 const allowedOrigin = "http://localhost:3000"
 assert(
   resolveRuntimeServerOptions({}).allowedOrigins.includes("http://127.0.0.1:3147"),
