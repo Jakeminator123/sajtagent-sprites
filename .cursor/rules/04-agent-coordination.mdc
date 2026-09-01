@@ -10,6 +10,10 @@ alwaysApply: true
   scope, coordinate before touching overlapping files.
 - Prefer direct agent messaging. Keep updates to at most four short lines:
   task, files or area, what and why, and the next conflicting action.
+- `/kom <agent-or-task> <message>` invokes the project skill `kom`: contact the
+  named existing agent now and report whether the message was delivered.
+- Do not create a new agent merely to satisfy `/kom`. If live delivery is not
+  available, use the secret-free coordination note below and say so explicitly.
 - If direct messaging is unavailable, use a secret-free temporary note at
   `.agents/coordination/<agent-id>.md`. Remove or finish it when done.
 - Pause overlapping edits and agree on ownership, ordering, or a compatible
