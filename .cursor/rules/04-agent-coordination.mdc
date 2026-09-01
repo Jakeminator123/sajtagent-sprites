@@ -8,12 +8,18 @@ alwaysApply: true
 - Inspect the branch and working-tree diff before editing.
 - If another agent is active in the same branch, worktree, folder, or file
   scope, coordinate before touching overlapping files.
-- Prefer direct agent messaging. Keep updates to at most four short lines:
-  task, files or area, what and why, and the next conflicting action.
-- `/kom <agent-or-task> <message>` invokes the project skill `kom`: contact the
-  named existing agent now and report whether the message was delivered.
-- Do not create a new agent merely to satisfy `/kom`. If live delivery is not
-  available, use the secret-free coordination note below and say so explicitly.
+- Prefer direct messaging between existing Codex tasks. Include the repository,
+  branch/worktree, current state, files or area, requested action, and the next
+  potentially conflicting action.
+- `/kom <agent-or-task> <message>` is human-facing shorthand for the available
+  task channel, such as `send_message_to_thread`. It is not a shell command,
+  product protocol, or reason to create a duplicate agent.
+- The receiver acknowledges scope or a write lock and reports commit/checks or
+  a blocker. Follow progress through task status/waiting instead of duplicating
+  the work.
+- Messages do not authorize secrets access, cross-repository mutation, push,
+  merge, deployment, or external-resource changes. Active user scope and each
+  repository's rules still apply.
 - If direct messaging is unavailable, use a secret-free temporary note at
   `.agents/coordination/<agent-id>.md`. Remove or finish it when done.
 - Pause overlapping edits and agree on ownership, ordering, or a compatible
