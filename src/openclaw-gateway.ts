@@ -319,7 +319,6 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
           thinking: route.thinkingLevel,
           deliver: false,
           timeout: Math.ceil(timeoutMs / 1_000),
-          cwd: workspace.workerDir,
           promptMode: "minimal",
           sessionEffects: "internal",
           disableMessageTool: true,
