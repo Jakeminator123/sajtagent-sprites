@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "openai-docs": {
+      "url": "https://developers.openai.com/mcp"
+    },
+    "openclaw-docs": {
+      "type": "http",
+      "url": "https://docs.openclaw.ai/mcp"
+    },
+    "context7": {
+      "url": "https://mcp.context7.com/mcp"
+    }
+  }
+}

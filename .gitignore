@@ -10,3 +10,6 @@ __pycache__/
 *.log
 desktop.ini
 .sprite
+
+# Local coordination between agents sharing this worktree
+.agents/coordination/

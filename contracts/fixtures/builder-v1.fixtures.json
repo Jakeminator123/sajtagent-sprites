@@ -1,0 +1,506 @@
+{
+  "schemaCases": [
+    {
+      "name": "valid create intent",
+      "schema": "BuilderIntentV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "intentType": "site.create",
+        "message": "Skapa en varm och tydlig webbplats för ett lokalt bageri.",
+        "context": {
+          "buildChoices": {
+            "siteKind": "website",
+            "siteType": "landing",
+            "pageCount": 3,
+            "planMode": false
+          },
+          "mode": "freeform",
+          "planMode": false
+        }
+      }
+    },
+    {
+      "name": "intent cannot name runtime tools",
+      "schema": "BuilderIntentV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "intentType": "site.change",
+        "message": "Ändra hero-sektionen.",
+        "context": {},
+        "openClawTool": "exec"
+      }
+    },
+    {
+      "name": "valid authorized build job",
+      "schema": "BuildJobV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "jobId": "job-001",
+        "tenantId": "tenant-001",
+        "projectId": "project-001",
+        "baseRevisionId": "revision-001",
+        "idempotencyKey": "idem-001",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:15:00.000Z",
+        "intent": {
+          "schemaVersion": 1,
+          "intentType": "site.create",
+          "message": "Skapa en varm och tydlig webbplats för ett lokalt bageri.",
+          "context": {
+            "selectedBaseRevisionId": "revision-001",
+            "buildChoices": {
+              "siteKind": "website",
+              "siteType": "landing",
+              "pageCount": 3
+            }
+          }
+        },
+        "executionPolicy": {
+          "deadlineAt": "2026-09-01T12:10:00.000Z",
+          "maxSteps": 40,
+          "maxToolCalls": 120,
+          "maxModelTokens": 200000,
+          "maxCostMicros": 5000000,
+          "capabilities": [
+            "workspace.read",
+            "workspace.write",
+            "workspace.apply_patch",
+            "command.execute",
+            "checks.run",
+            "browser.inspect",
+            "preview.manage",
+            "packages.install"
+          ],
+          "network": {
+            "mode": "allowlist",
+            "allowedHosts": [
+              "registry.npmjs.org"
+            ]
+          },
+          "packages": {
+            "mode": "allowlist",
+            "allowedPackages": [
+              "next",
+              "react",
+              "react-dom"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "job cannot carry raw OpenClaw configuration",
+      "schema": "BuildJobV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "jobId": "job-001",
+        "tenantId": "tenant-001",
+        "projectId": "project-001",
+        "baseRevisionId": "revision-001",
+        "idempotencyKey": "idem-001",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:15:00.000Z",
+        "intent": {
+          "schemaVersion": 1,
+          "intentType": "site.create",
+          "message": "Skapa sidan.",
+          "context": {}
+        },
+        "executionPolicy": {
+          "deadlineAt": "2026-09-01T12:10:00.000Z",
+          "maxSteps": 20,
+          "maxToolCalls": 40,
+          "maxModelTokens": 100000,
+          "maxCostMicros": 1000000,
+          "capabilities": [
+            "workspace.read"
+          ],
+          "network": {
+            "mode": "deny-all"
+          },
+          "packages": {
+            "mode": "deny"
+          }
+        },
+        "openClaw": {
+          "sandboxMode": "all",
+          "workspaceAccess": "rw"
+        }
+      }
+    },
+    {
+      "name": "job deadline cannot exceed expiry",
+      "schema": "BuildJobV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "jobId": "job-002",
+        "tenantId": "tenant-001",
+        "projectId": "project-001",
+        "baseRevisionId": "revision-001",
+        "idempotencyKey": "idem-002",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:10:00.000Z",
+        "intent": {
+          "schemaVersion": 1,
+          "intentType": "site.change",
+          "message": "Ändra sidan.",
+          "context": {}
+        },
+        "executionPolicy": {
+          "deadlineAt": "2026-09-01T12:11:00.000Z",
+          "maxSteps": 20,
+          "maxToolCalls": 40,
+          "maxModelTokens": 100000,
+          "maxCostMicros": 1000000,
+          "capabilities": [
+            "workspace.read"
+          ],
+          "network": {
+            "mode": "deny-all"
+          },
+          "packages": {
+            "mode": "deny"
+          }
+        }
+      }
+    },
+    {
+      "name": "valid worker candidate report",
+      "schema": "WorkerReportV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "status": "candidate",
+        "jobId": "job-001",
+        "sourceRunId": "run-001",
+        "baseRevisionId": "revision-001",
+        "candidateRevisionId": "candidate-001",
+        "changedPaths": [
+          "app/page.tsx",
+          "app/globals.css"
+        ],
+        "artifacts": [
+          {
+            "kind": "preview",
+            "ref": "preview-candidate-001",
+            "mediaType": "text/html"
+          }
+        ],
+        "receipts": [
+          {
+            "receiptId": "receipt-check-001",
+            "category": "check",
+            "name": "npm run build",
+            "status": "passed",
+            "startedAt": "2026-09-01T12:05:00.000Z",
+            "finishedAt": "2026-09-01T12:06:00.000Z",
+            "summary": "Build completed without errors.",
+            "evidenceRef": "check-report-001"
+          }
+        ],
+        "diagnostics": [],
+        "reportedAt": "2026-09-01T12:06:01.000Z"
+      }
+    },
+    {
+      "name": "worker report cannot mint a product version",
+      "schema": "WorkerReportV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "status": "candidate",
+        "jobId": "job-001",
+        "sourceRunId": "run-001",
+        "baseRevisionId": "revision-001",
+        "candidateRevisionId": "candidate-001",
+        "versionId": "version-001",
+        "changedPaths": [],
+        "artifacts": [],
+        "receipts": [],
+        "diagnostics": [],
+        "reportedAt": "2026-09-01T12:06:01.000Z"
+      }
+    },
+    {
+      "name": "valid worker timeout report",
+      "schema": "WorkerReportV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "status": "timed_out",
+        "jobId": "job-001",
+        "sourceRunId": "run-001",
+        "baseRevisionId": "revision-001",
+        "receipts": [],
+        "diagnostics": [
+          {
+            "code": "runtime.timeout",
+            "message": "The upstream run exceeded the authorized deadline.",
+            "retryable": true
+          }
+        ],
+        "reportedAt": "2026-09-01T12:10:00.000Z"
+      }
+    },
+    {
+      "name": "valid verified build result",
+      "schema": "BuildResultV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "status": "succeeded",
+        "jobId": "job-001",
+        "baseRevisionId": "revision-001",
+        "workspaceRevisionId": "revision-002",
+        "versionId": "version-001",
+        "previewRef": "preview-version-001",
+        "sitemapRevision": "sitemap-001",
+        "verifiedAt": "2026-09-01T12:07:00.000Z",
+        "receipts": [
+          {
+            "receiptId": "receipt-verify-001",
+            "category": "check",
+            "name": "acceptance",
+            "status": "passed",
+            "startedAt": "2026-09-01T12:06:10.000Z",
+            "finishedAt": "2026-09-01T12:06:50.000Z",
+            "evidenceRef": "acceptance-report-001"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verified result cannot expose a raw preview URL",
+      "schema": "BuildResultV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "status": "succeeded",
+        "jobId": "job-001",
+        "baseRevisionId": "revision-001",
+        "workspaceRevisionId": "revision-002",
+        "versionId": "version-001",
+        "privatePreviewUrl": "https://example.invalid",
+        "sitemapRevision": "sitemap-001",
+        "verifiedAt": "2026-09-01T12:07:00.000Z",
+        "receipts": []
+      }
+    },
+    {
+      "name": "valid failed build result",
+      "schema": "BuildResultV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "status": "failed",
+        "jobId": "job-002",
+        "baseRevisionId": "revision-001",
+        "code": "verification_failed",
+        "message": "The candidate did not pass the required checks.",
+        "retryable": true,
+        "failedAt": "2026-09-01T12:07:00.000Z",
+        "receipts": []
+      }
+    },
+    {
+      "name": "valid terminal build event",
+      "schema": "BuildEventV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "jobId": "job-001",
+        "sequence": 4,
+        "occurredAt": "2026-09-01T12:07:01.000Z",
+        "sourceRunId": "run-001",
+        "type": "job.succeeded",
+        "payload": {
+          "result": {
+            "schemaVersion": 1,
+            "status": "succeeded",
+            "jobId": "job-001",
+            "baseRevisionId": "revision-001",
+            "workspaceRevisionId": "revision-002",
+            "versionId": "version-001",
+            "previewRef": "preview-version-001",
+            "sitemapRevision": "sitemap-001",
+            "verifiedAt": "2026-09-01T12:07:00.000Z",
+            "receipts": [
+              {
+                "receiptId": "receipt-verify-001",
+                "category": "check",
+                "name": "acceptance",
+                "status": "passed",
+                "startedAt": "2026-09-01T12:06:10.000Z",
+                "finishedAt": "2026-09-01T12:06:50.000Z"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "deprecated ready event is rejected",
+      "schema": "BuildEventV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "jobId": "job-001",
+        "sequence": 3,
+        "occurredAt": "2026-09-01T12:06:30.000Z",
+        "type": "preview.ready",
+        "payload": {
+          "previewRef": "preview-version-001"
+        }
+      }
+    }
+  ],
+  "streamCases": [
+    {
+      "name": "valid complete stream ends in success",
+      "expectValid": true,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "jobId": "job-001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:01.000Z",
+          "type": "job.accepted",
+          "payload": {
+            "acceptedAt": "2026-09-01T12:00:01.000Z"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "jobId": "job-001",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:00:02.000Z",
+          "sourceRunId": "run-001",
+          "type": "job.running",
+          "payload": {
+            "phase": "build",
+            "label": "Sajtagenten redigerar arbetsytan"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "jobId": "job-001",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:00:03.000Z",
+          "sourceRunId": "run-001",
+          "type": "message.delta",
+          "payload": {
+            "delta": "Jag bygger den första versionen."
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "jobId": "job-001",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:07:01.000Z",
+          "sourceRunId": "run-001",
+          "type": "job.succeeded",
+          "payload": {
+            "result": {
+              "schemaVersion": 1,
+              "status": "succeeded",
+              "jobId": "job-001",
+              "baseRevisionId": "revision-001",
+              "workspaceRevisionId": "revision-002",
+              "versionId": "version-001",
+              "previewRef": "preview-version-001",
+              "sitemapRevision": "sitemap-001",
+              "verifiedAt": "2026-09-01T12:07:00.000Z",
+              "receipts": [
+                {
+                  "receiptId": "receipt-verify-001",
+                  "category": "check",
+                  "name": "acceptance",
+                  "status": "passed",
+                  "startedAt": "2026-09-01T12:06:10.000Z",
+                  "finishedAt": "2026-09-01T12:06:50.000Z"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "event after terminal is rejected",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "jobId": "job-002",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:01.000Z",
+          "type": "job.failed",
+          "payload": {
+            "result": {
+              "schemaVersion": 1,
+              "status": "failed",
+              "jobId": "job-002",
+              "baseRevisionId": "revision-001",
+              "code": "worker_failed",
+              "message": "The upstream run failed.",
+              "retryable": true,
+              "failedAt": "2026-09-01T12:00:01.000Z",
+              "receipts": []
+            }
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "jobId": "job-002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:00:02.000Z",
+          "type": "message.delta",
+          "payload": {
+            "delta": "Detta får inte komma efter terminaleventet."
+          }
+        }
+      ]
+    },
+    {
+      "name": "sequence gap is rejected",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "jobId": "job-003",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:01.000Z",
+          "type": "job.accepted",
+          "payload": {
+            "acceptedAt": "2026-09-01T12:00:01.000Z"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "jobId": "job-003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:00:03.000Z",
+          "type": "job.failed",
+          "payload": {
+            "result": {
+              "schemaVersion": 1,
+              "status": "failed",
+              "jobId": "job-003",
+              "baseRevisionId": "revision-001",
+              "code": "runtime_unavailable",
+              "message": "Runtime unavailable.",
+              "retryable": true,
+              "failedAt": "2026-09-01T12:00:03.000Z",
+              "receipts": []
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
