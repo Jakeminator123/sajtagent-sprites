@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert"
-import { randomUUID } from "node:crypto"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -13,6 +13,14 @@ import {
   validateAgentTurnAgainstPolicyV1,
 } from "../contracts/agent-session-v1.ts"
 import {
+  ARTIFACT_READ_PATH_V1,
+  ArtifactReadRequestV1Schema,
+  MAX_ARTIFACT_READ_REQUEST_BYTES_V1,
+  MAX_PREVIEW_ARTIFACT_BYTES_V1,
+  validateArtifactReadResponseV1,
+} from "../contracts/artifact-read-v1.ts"
+import { WorkerReportV1Schema } from "../contracts/builder-v1.ts"
+import {
   createRuntimeServer,
   resolveRuntimeServerOptions,
 } from "../src/server.ts"
@@ -20,7 +28,10 @@ import {
   routeAgentTurnModelV1,
   routeBuildJobModelV1,
 } from "../src/model-routing.ts"
-import { compileSessionPermissionModeV1 } from "../src/openclaw-gateway.ts"
+import {
+  compileSessionPermissionModeV1,
+  type BuildJobRunnerV1,
+} from "../src/openclaw-gateway.ts"
 import {
   SIGNATURE_HEADERS_V1,
   signRuntimeRequestV1,
@@ -39,6 +50,19 @@ import {
 } from "../src/agent-turn.ts"
 
 const signingKey = "local-test-key-that-is-at-least-32-characters-long"
+
+function signedRuntimeHeaders(pathname: string, body: string, nonce = randomUUID()) {
+  const timestamp = new Date().toISOString()
+  return {
+    "content-type": "application/json",
+    [SIGNATURE_HEADERS_V1.timestamp]: timestamp,
+    [SIGNATURE_HEADERS_V1.nonce]: nonce,
+    [SIGNATURE_HEADERS_V1.signature]: signRuntimeRequestV1(
+      { method: "POST", pathname, timestamp, nonce, body },
+      signingKey,
+    ),
+  }
+}
 assert.equal(MAX_AGENT_TURN_EVENTS_V1, 4_096)
 assert.equal(MAX_AGENT_EVENT_SSE_BYTES_V1, 32 * 1024)
 assert.equal(MAX_AGENT_TURN_SSE_BYTES_V1, 4 * 1024 * 1024)
@@ -455,4 +479,270 @@ try {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
   })
+}
+
+const artifactTestRoot = await mkdtemp(join(tmpdir(), "siteagent-artifact-read-"))
+const workersRoot = join(artifactTestRoot, "workers")
+const workspaceId = "a".repeat(32)
+const workerDir = join(workersRoot, workspaceId)
+const previewPath = join(workerDir, "index.html")
+const previewBytes = Buffer.from(
+  "<!doctype html><html><body>verified preview</body></html>",
+)
+const previewSha256 = createHash("sha256").update(previewBytes).digest("hex")
+const previewRef = `sprite-worktree:${workspaceId}:index.html`
+const sourceRunId = "openclaw:artifact-read-test"
+
+await mkdir(workerDir, { recursive: true })
+await writeFile(previewPath, previewBytes)
+
+const artifactRunner: BuildJobRunnerV1 = {
+  async health() {
+    return { connected: true, runtimeVersion: "artifact-test" }
+  },
+  async run(job) {
+    const reportedAt = new Date().toISOString()
+    return WorkerReportV1Schema.parse({
+      schemaVersion: 1,
+      status: "candidate",
+      jobId: job.jobId,
+      sourceRunId,
+      baseRevisionId: job.baseRevisionId,
+      candidateRevisionId: "candidate:artifact-read-test",
+      changedPaths: ["index.html"],
+      artifacts: [
+        {
+          kind: "preview",
+          ref: previewRef,
+          mediaType: "text/html",
+          sha256: previewSha256,
+        },
+      ],
+      receipts: [
+        {
+          receiptId: "preview:artifact-read-test",
+          category: "preview",
+          name: "HTML preview artifact",
+          status: "passed",
+          startedAt: reportedAt,
+          finishedAt: reportedAt,
+          evidenceRef: previewRef,
+        },
+      ],
+      diagnostics: [],
+      reportedAt,
+    })
+  },
+}
+
+const artifactServer = createRuntimeServer({
+  host: "127.0.0.1",
+  port: 0,
+  signingKey,
+  allowedOrigins: [allowedOrigin],
+  ceiling: DEFAULT_LOCAL_AGENT_CEILING_V1,
+  runner: artifactRunner,
+  workersRoot,
+})
+
+await new Promise<void>((resolve, reject) => {
+  artifactServer.once("error", reject)
+  artifactServer.listen(0, "127.0.0.1", () => resolve())
+})
+
+try {
+  const address = artifactServer.address()
+  assert(address && typeof address === "object")
+  const baseUrl = `http://127.0.0.1:${address.port}`
+  const healthResponse = await fetch(`${baseUrl}/health`)
+  const health = await healthResponse.json() as {
+    artifactReadContractVersion: number
+    artifactReadEnabled: boolean
+  }
+  assert.equal(health.artifactReadContractVersion, 1)
+  assert.equal(health.artifactReadEnabled, true)
+
+  const createdAt = new Date()
+  const artifactJob = {
+    schemaVersion: 1,
+    jobId: "job:artifact-read-test",
+    tenantId: "tenant:test",
+    projectId: "project:test",
+    baseRevisionId: "revision:artifact-base",
+    idempotencyKey: "idempotency:artifact-read-test",
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + 10 * 60_000).toISOString(),
+    intent: {
+      schemaVersion: 1,
+      intentType: "site.change",
+      message: "Skapa en verifierbar preview",
+      context: {},
+    },
+    executionPolicy: {
+      deadlineAt: new Date(createdAt.getTime() + 5 * 60_000).toISOString(),
+      maxSteps: 20,
+      maxToolCalls: 40,
+      maxModelTokens: 20_000,
+      maxCostMicros: 100_000,
+      capabilities: ["workspace.read", "preview.manage"],
+      network: { mode: "deny-all" },
+      packages: { mode: "deny" },
+    },
+  }
+  const buildBody = JSON.stringify(artifactJob)
+  const candidateResponse = await fetch(`${baseUrl}/v1/build-jobs`, {
+    method: "POST",
+    headers: signedRuntimeHeaders("/v1/build-jobs", buildBody),
+    body: buildBody,
+  })
+  assert.equal(candidateResponse.status, 200)
+  const candidate = WorkerReportV1Schema.parse(await candidateResponse.json())
+  assert.equal(candidate.status, "candidate")
+  if (candidate.status !== "candidate") throw new Error("Expected candidate report")
+  const preview = candidate.artifacts.find((artifact) => artifact.kind === "preview")
+  assert(preview?.sha256)
+
+  const readRequest = ArtifactReadRequestV1Schema.parse({
+    schemaVersion: 1,
+    readIdempotencyKey: "artifact-read:runtime-test",
+    binding: {
+      tenantId: artifactJob.tenantId,
+      projectId: artifactJob.projectId,
+      jobId: candidate.jobId,
+      baseRevisionId: candidate.baseRevisionId,
+      sourceRunId: candidate.sourceRunId,
+      candidateRevisionId: candidate.candidateRevisionId,
+      reportedAt: candidate.reportedAt,
+    },
+    artifact: {
+      kind: "preview",
+      ref: preview.ref,
+      mediaType: preview.mediaType,
+      sha256: preview.sha256,
+    },
+    maxBytes: MAX_PREVIEW_ARTIFACT_BYTES_V1,
+  })
+  const readBody = JSON.stringify(readRequest)
+
+  const unsignedRead = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: readBody,
+  })
+  assert.equal(unsignedRead.status, 401)
+
+  const firstRead = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: {
+      ...signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, readBody),
+      origin: allowedOrigin,
+    },
+    body: readBody,
+  })
+  assert.equal(firstRead.status, 200)
+  assert.match(firstRead.headers.get("content-type") || "", /^application\/json/)
+  assert.equal(firstRead.headers.get("cache-control"), "no-store")
+  assert.equal(firstRead.headers.get("access-control-allow-origin"), null)
+  const readResponse = await firstRead.json()
+  const validatedRead = validateArtifactReadResponseV1(readRequest, readResponse)
+  assert.equal(validatedRead.success, true)
+  assert.equal(validatedRead.response.artifact.relativePath, "index.html")
+  assert.deepEqual(
+    Buffer.from(validatedRead.response.artifact.bytesBase64, "base64"),
+    previewBytes,
+  )
+
+  const repeatRead = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, readBody),
+    body: readBody,
+  })
+  assert.equal(repeatRead.status, 200)
+
+  const replayNonce = randomUUID()
+  const replayHeaders = signedRuntimeHeaders(
+    ARTIFACT_READ_PATH_V1,
+    readBody,
+    replayNonce,
+  )
+  const nonceFirst = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: replayHeaders,
+    body: readBody,
+  })
+  assert.equal(nonceFirst.status, 200)
+  const nonceReplay = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: replayHeaders,
+    body: readBody,
+  })
+  assert.equal(nonceReplay.status, 409)
+
+  const conflictingReadBody = JSON.stringify({ ...readRequest, maxBytes: 1000 })
+  const conflictingRead = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, conflictingReadBody),
+    body: conflictingReadBody,
+  })
+  assert.equal(conflictingRead.status, 409)
+
+  const wrongBindingBody = JSON.stringify({
+    ...readRequest,
+    readIdempotencyKey: "artifact-read:wrong-binding",
+    binding: { ...readRequest.binding, projectId: "project:other" },
+  })
+  const wrongBinding = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, wrongBindingBody),
+    body: wrongBindingBody,
+  })
+  assert.equal(wrongBinding.status, 404)
+  assert.deepEqual(await wrongBinding.json(), { error: "artifact_unavailable" })
+
+  const queriedRead = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}?ref=forbidden`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, readBody),
+    body: readBody,
+  })
+  assert.equal(queriedRead.status, 404)
+
+  const oversizedWireBody = `${readBody}${" ".repeat(MAX_ARTIFACT_READ_REQUEST_BYTES_V1)}`
+  const oversizedWire = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, oversizedWireBody),
+    body: oversizedWireBody,
+  })
+  assert.equal(oversizedWire.status, 413)
+  assert.deepEqual(await oversizedWire.json(), { error: "invalid_request" })
+
+  await writeFile(previewPath, "<!doctype html><html><body>tampered</body></html>")
+  const tamperedBody = JSON.stringify({
+    ...readRequest,
+    readIdempotencyKey: "artifact-read:tampered",
+  })
+  const tamperedRead = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, tamperedBody),
+    body: tamperedBody,
+  })
+  assert.equal(tamperedRead.status, 404)
+
+  await writeFile(previewPath, Buffer.alloc(MAX_PREVIEW_ARTIFACT_BYTES_V1 + 1, 0x61))
+  const oversizedArtifactBody = JSON.stringify({
+    ...readRequest,
+    readIdempotencyKey: "artifact-read:oversized-artifact",
+  })
+  const oversizedArtifact = await fetch(`${baseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(ARTIFACT_READ_PATH_V1, oversizedArtifactBody),
+    body: oversizedArtifactBody,
+  })
+  assert.equal(oversizedArtifact.status, 404)
+
+  console.log("PASS artifact read: exact signed binding, bounded bytes, hash and idempotency")
+} finally {
+  await new Promise<void>((resolve, reject) => {
+    artifactServer.close((error) => (error ? reject(error) : resolve()))
+  })
+  await rm(artifactTestRoot, { recursive: true, force: true })
 }

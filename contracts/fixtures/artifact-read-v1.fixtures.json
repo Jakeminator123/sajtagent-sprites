@@ -1,0 +1,239 @@
+{
+  "schemaCases": [
+    {
+      "name": "valid bound artifact read request",
+      "schema": "request",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:one",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "artifact": {
+          "kind": "preview",
+          "ref": "sprite-worktree:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:index.html",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf"
+        },
+        "maxBytes": 1048576
+      }
+    },
+    {
+      "name": "request cannot exceed Site maxBytes policy",
+      "schema": "request",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:too-large",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "artifact": {
+          "kind": "preview",
+          "ref": "opaque:preview",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf"
+        },
+        "maxBytes": 1048577
+      }
+    },
+    {
+      "name": "request rejects uncontracted fields",
+      "schema": "request",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:extra",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "artifact": {
+          "kind": "preview",
+          "ref": "opaque:preview",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf",
+          "path": "index.html"
+        },
+        "maxBytes": 1048576
+      }
+    },
+    {
+      "name": "valid bound artifact read response",
+      "schema": "response",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:one",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "maxBytes": 1048576,
+        "artifact": {
+          "kind": "preview",
+          "ref": "sprite-worktree:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:index.html",
+          "relativePath": "index.html",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf",
+          "sizeBytes": 57,
+          "encoding": "base64",
+          "bytesBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+PGJvZHk+dmVyaWZpZWQgcHJldmlldzwvYm9keT48L2h0bWw+"
+        }
+      }
+    },
+    {
+      "name": "response path is one exact preview path",
+      "schema": "response",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:one",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "maxBytes": 1048576,
+        "artifact": {
+          "kind": "preview",
+          "ref": "opaque:preview",
+          "relativePath": "../index.html",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf",
+          "sizeBytes": 57,
+          "encoding": "base64",
+          "bytesBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+PGJvZHk+dmVyaWZpZWQgcHJldmlldzwvYm9keT48L2h0bWw+"
+        }
+      }
+    },
+    {
+      "name": "response size must match decoded bytes",
+      "schema": "response",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:one",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "maxBytes": 1048576,
+        "artifact": {
+          "kind": "preview",
+          "ref": "opaque:preview",
+          "relativePath": "index.html",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf",
+          "sizeBytes": 56,
+          "encoding": "base64",
+          "bytesBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+PGJvZHk+dmVyaWZpZWQgcHJldmlldzwvYm9keT48L2h0bWw+"
+        }
+      }
+    },
+    {
+      "name": "response hash must match decoded bytes",
+      "schema": "response",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "readIdempotencyKey": "artifact-read:one",
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:one",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        },
+        "maxBytes": 1048576,
+        "artifact": {
+          "kind": "preview",
+          "ref": "opaque:preview",
+          "relativePath": "index.html",
+          "mediaType": "text/html",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sizeBytes": 57,
+          "encoding": "base64",
+          "bytesBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+PGJvZHk+dmVyaWZpZWQgcHJldmlldzwvYm9keT48L2h0bWw+"
+        }
+      }
+    }
+  ],
+  "bindingCases": [
+    {
+      "name": "response preserves the entire request binding",
+      "expectValid": true,
+      "requestCase": 0,
+      "responseCase": 3
+    },
+    {
+      "name": "response cannot drift to another project",
+      "expectValid": false,
+      "requestCase": 0,
+      "responseCase": 3,
+      "responsePatch": {
+        "binding": {
+          "tenantId": "tenant:one",
+          "projectId": "project:other",
+          "jobId": "job:one",
+          "baseRevisionId": "revision:base",
+          "sourceRunId": "openclaw:run-one",
+          "candidateRevisionId": "candidate:one",
+          "reportedAt": "2026-09-01T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "response cannot substitute another artifact ref",
+      "expectValid": false,
+      "requestCase": 0,
+      "responseCase": 3,
+      "responsePatch": {
+        "artifact": {
+          "kind": "preview",
+          "ref": "sprite-worktree:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:index.html",
+          "relativePath": "index.html",
+          "mediaType": "text/html",
+          "sha256": "06b63da2050b82f16f50348addafe30b050a4367bd41b2c3d9c7ccc2a2a3e9bf",
+          "sizeBytes": 57,
+          "encoding": "base64",
+          "bytesBase64": "PCFkb2N0eXBlIGh0bWw+PGh0bWw+PGJvZHk+dmVyaWZpZWQgcHJldmlldzwvYm9keT48L2h0bWw+"
+        }
+      }
+    }
+  ]
+}

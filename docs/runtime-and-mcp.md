@@ -4,10 +4,13 @@ Status: accepted runtime baseline, 2026-09-01.
 
 ## Runtime adapter and local profile compiler
 
-The runtime has three surfaces: a local profile compiler, a signed
-`BuildJobV1` adapter, and a signed continuous-agent turn stream for an OpenClaw
-Gateway. The exact local-only turn ingress is documented in
+The runtime has four surfaces: a local profile compiler, a signed
+`BuildJobV1` adapter, a signed continuous-agent turn stream for an OpenClaw
+Gateway, and a signed private reader for preview bytes authorized by a
+candidate report. The exact local-only turn ingress is documented in
 [`private-agent-turn-ingress-v1.md`](./private-agent-turn-ingress-v1.md). The
+artifact reader is documented in
+[`private-artifact-read-v1.md`](./private-artifact-read-v1.md). The
 build adapter creates one server-owned detached Git worktree per idempotent job, creates a private
 OpenClaw session rooted at that worktree, runs the selected model, and
 normalizes the result into a validated `WorkerReportV1`.
@@ -23,8 +26,9 @@ npm run dev:runtime
 ```
 
 The default listener is `http://127.0.0.1:4317`. `GET /health` and local
-`POST /v1/agent-profiles/compile` need no credential. `POST /v1/build-jobs`
-and `POST /v1/agent-turns` always need `SITEAGENT_RUNTIME_SIGNING_KEY` and
+`POST /v1/agent-profiles/compile` need no credential. `POST /v1/build-jobs`,
+`POST /v1/agent-turns`, and `POST /v1/artifacts/read` always need
+`SITEAGENT_RUNTIME_SIGNING_KEY` and
 validate timestamp, nonce, signature, expiry, idempotency, workspace revision,
 and their frozen schemas.
 It returns fail-closed typed diagnostics when the Gateway or project checkout
