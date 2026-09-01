@@ -339,7 +339,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
         if (waited.status === "cancelled") {
           return failureReport(job, "openclaw_run_cancelled", "OpenClaw-körningen avbröts.", true, accepted.runId, "cancelled")
         }
-        if (waited.status !== "completed") {
+        if (waited.status !== "completed" && waited.status !== "ok") {
           return failureReport(
             job,
             "openclaw_run_failed",
