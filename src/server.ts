@@ -55,6 +55,7 @@ import {
 } from "./artifact-reader.ts"
 
 const MAX_BODY_BYTES = 512 * 1024
+const MIN_RUNTIME_SIGNING_KEY_CHARACTERS = 32
 const NONCE_RETENTION_MS = 10 * 60_000
 const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60_000
 const ARTIFACT_AUTHORIZATION_RETENTION_MS = 24 * 60 * 60_000
@@ -84,6 +85,14 @@ export type RuntimeServerOptions = {
 
 function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost"
+}
+
+function hasValidRuntimeSigningKey(
+  signingKey: string | null | undefined,
+): signingKey is string {
+  return Boolean(
+    signingKey && signingKey.length >= MIN_RUNTIME_SIGNING_KEY_CHARACTERS,
+  )
 }
 
 function responseHeaders(): Record<string, string> {
@@ -152,7 +161,7 @@ export function resolveRuntimeServerOptions(
     ? env.SITEAGENT_STUDIO_ORIGINS.split(",").map((value) => value.trim()).filter(Boolean)
     : DEFAULT_ALLOWED_ORIGINS
 
-  if (!isLoopbackHost(host) && (!signingKey || signingKey.length < 32)) {
+  if (!isLoopbackHost(host) && !hasValidRuntimeSigningKey(signingKey)) {
     throw new Error(
       "A non-loopback runtime bind requires SITEAGENT_RUNTIME_SIGNING_KEY with at least 32 characters",
     )
@@ -326,7 +335,7 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
     pathname: string,
     body: string,
   ): { ok: true } | { ok: false; status: number; reason: string } {
-    if (!options.signingKey) {
+    if (!hasValidRuntimeSigningKey(options.signingKey)) {
       return { ok: false, status: 503, reason: "Runtime signing is not configured" }
     }
     const timestamp = request.headers[SIGNATURE_HEADERS_V1.timestamp]
@@ -390,6 +399,9 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         const artifactReaderAvailable = await artifactReaderRootAvailableV1(
           options.workersRoot,
         )
+        const signedPrivateRoutesEnabled = hasValidRuntimeSigningKey(
+          options.signingKey,
+        )
         sendJson(
           response,
           200,
@@ -399,14 +411,16 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             openClawConnected: gatewayHealth.connected,
             openClawVersion: gatewayHealth.runtimeVersion,
             openClawReason: gatewayHealth.reason,
-            signedJobsEnabled: Boolean(options.signingKey),
+            signedJobsEnabled: signedPrivateRoutesEnabled,
             agentSessionContractVersion: 1,
             agentTurnStreamTransport: "sse",
-            agentTurnStreamEnabled: Boolean(options.signingKey && turnGatewayHealth.connected),
+            agentTurnStreamEnabled: Boolean(
+              signedPrivateRoutesEnabled && turnGatewayHealth.connected,
+            ),
             agentTurnCapabilities: RUNTIME_AGENT_TURN_CAPABILITIES_V1,
             artifactReadContractVersion: ARTIFACT_READ_CONTRACT_VERSION_V1,
             artifactReadEnabled: Boolean(
-              options.signingKey && artifactReaderAvailable,
+              signedPrivateRoutesEnabled && artifactReaderAvailable,
             ),
           },
           corsHeaders,

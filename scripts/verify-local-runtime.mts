@@ -496,6 +496,54 @@ const sourceRunId = "openclaw:artifact-read-test"
 await mkdir(workerDir, { recursive: true })
 await writeFile(previewPath, previewBytes)
 
+const shortSigningKey = "too-short"
+const shortKeyServer = createRuntimeServer({
+  host: "127.0.0.1",
+  port: 0,
+  signingKey: shortSigningKey,
+  allowedOrigins: [allowedOrigin],
+  ceiling: DEFAULT_LOCAL_AGENT_CEILING_V1,
+  workersRoot,
+})
+await new Promise<void>((resolve, reject) => {
+  shortKeyServer.once("error", reject)
+  shortKeyServer.listen(0, "127.0.0.1", () => resolve())
+})
+try {
+  const shortAddress = shortKeyServer.address()
+  assert(shortAddress && typeof shortAddress === "object")
+  const shortBaseUrl = `http://127.0.0.1:${shortAddress.port}`
+  const shortHealth = await fetch(`${shortBaseUrl}/health`)
+  const shortHealthBody = await shortHealth.json() as {
+    signedJobsEnabled: boolean
+    agentTurnStreamEnabled: boolean
+    artifactReadEnabled: boolean
+  }
+  assert.equal(shortHealthBody.signedJobsEnabled, false)
+  assert.equal(shortHealthBody.agentTurnStreamEnabled, false)
+  assert.equal(shortHealthBody.artifactReadEnabled, false)
+
+  const shortBody = "{}"
+  const shortTimestamp = new Date().toISOString()
+  const shortNonce = randomUUID()
+  const shortSignedRead = await fetch(`${shortBaseUrl}${ARTIFACT_READ_PATH_V1}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [SIGNATURE_HEADERS_V1.timestamp]: shortTimestamp,
+      [SIGNATURE_HEADERS_V1.nonce]: shortNonce,
+      [SIGNATURE_HEADERS_V1.signature]: "0".repeat(64),
+    },
+    body: shortBody,
+  })
+  assert.equal(shortSignedRead.status, 503)
+  assert.deepEqual(await shortSignedRead.json(), { error: "unauthorized" })
+} finally {
+  await new Promise<void>((resolve, reject) => {
+    shortKeyServer.close((error) => (error ? reject(error) : resolve()))
+  })
+}
+
 const artifactRunner: BuildJobRunnerV1 = {
   async health() {
     return { connected: true, runtimeVersion: "artifact-test" }
