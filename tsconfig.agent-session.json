@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.contracts.json",
+  "include": [
+    "contracts/agent-session-v1.ts",
+    "contracts/builder-v1.ts",
+    "scripts/verify-agent-session-contract.mts"
+  ]
+}
