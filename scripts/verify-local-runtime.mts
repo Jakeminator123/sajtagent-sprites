@@ -8,7 +8,10 @@ import {
   DEFAULT_AGENT_PROFILE_V1,
   DEFAULT_LOCAL_AGENT_CEILING_V1,
 } from "../contracts/agent-profile-v1.ts"
-import { AgentEventV1Schema } from "../contracts/agent-session-v1.ts"
+import {
+  AgentEventV1Schema,
+  validateAgentTurnAgainstPolicyV1,
+} from "../contracts/agent-session-v1.ts"
 import {
   createRuntimeServer,
   resolveRuntimeServerOptions,
@@ -247,6 +250,12 @@ try {
     "message.delta",
     "turn.completed",
   ])
+  assert.equal(validateAgentTurnAgainstPolicyV1(
+    directTurn.session,
+    directTurn.policy,
+    agentEvents,
+    { baseSequence: directTurn.baseSequence },
+  ).success, true)
 
   const retryTimestamp = new Date().toISOString()
   const retryNonce = randomUUID()

@@ -296,12 +296,14 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
     const normalizerState = createOpenClawAgentNormalizerStateV1()
     let acceptedRunId: string | undefined
     let terminalEmitted = false
+    let messageEventCount = 0
     let eventFailure: Error | undefined
     const pendingFrames: EventFrame[] = []
 
     const emitOnce = (event: AgentEventDraftV1) => {
       if (terminalEmitted) return
       emit(event)
+      if (event.type === "message.delta") messageEventCount += 1
       terminalEmitted = event.type === "turn.completed" || event.type === "turn.failed"
     }
     const consumeFrame = (frame: EventFrame) => {
@@ -423,7 +425,18 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           type: "turn.failed",
           payload: {
             code: "openclaw_run_failed",
-            message: diagnosticText(waited.error) || "OpenClaw-körningen misslyckades.",
+            message: "OpenClaw-körningen misslyckades.",
+            retryable: true,
+          },
+        })
+        return
+      }
+      if (messageEventCount === 0) {
+        emitOnce({
+          type: "turn.failed",
+          payload: {
+            code: "openclaw_empty_answer",
+            message: "OpenClaw slutförde turen utan ett visningsbart svar.",
             retryable: true,
           },
         })
