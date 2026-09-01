@@ -207,3 +207,19 @@ export async function inspectBuildWorkspaceV1(
     candidateRevisionId: `candidate:${digest.digest("hex")}`,
   }
 }
+
+export async function findPreviewArtifactV1(
+  workspace: PreparedBuildWorkspaceV1,
+): Promise<{ path: string; sha256: string } | null> {
+  for (const path of ["dist/index.html", "build/index.html", "index.html"]) {
+    try {
+      const content = await readFile(join(workspace.workerDir, path))
+      const text = content.toString("utf8").toLowerCase()
+      if (!text.includes("<html") && !text.includes("<!doctype html")) continue
+      return { path, sha256: createHash("sha256").update(content).digest("hex") }
+    } catch {
+      // Try the next bounded preview candidate.
+    }
+  }
+  return null
+}

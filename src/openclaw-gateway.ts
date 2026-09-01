@@ -1,18 +1,26 @@
 import { GatewayClient } from "@openclaw/gateway-client"
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version"
+import { execFile } from "node:child_process"
+import { readFile } from "node:fs/promises"
+import { promisify } from "node:util"
 
 import {
   WorkerReportV1Schema,
   type BuildJobV1,
+  type EvidenceReceiptV1,
   type WorkerReportV1,
 } from "../contracts/builder-v1.ts"
 import type { OpenClawModelRouteV1 } from "./model-routing.ts"
 import { createRuntimeGatewayHostDepsV1 } from "./openclaw-device.ts"
 import {
   WorkspacePreparationError,
+  findPreviewArtifactV1,
   inspectBuildWorkspaceV1,
   prepareBuildWorkspaceV1,
+  type PreparedBuildWorkspaceV1,
 } from "./workspace.ts"
+
+const execFileAsync = promisify(execFile)
 
 type GatewayRequestClient = Pick<GatewayClient, "request">
 
@@ -121,6 +129,42 @@ function buildPrompt(job: BuildJobV1, route: OpenClawModelRouteV1): string {
     "Kör relevanta kontroller om checks.run är tillåtet. Gör inga commits, pushar, deployer eller externa meddelanden.",
     "Avsluta med en kort saklig sammanfattning. Resonemangsblock ska inte visas.",
   ].join("\n")
+}
+
+async function runWorkspaceCheckV1(
+  workspace: PreparedBuildWorkspaceV1,
+  timeoutMs: number,
+): Promise<EvidenceReceiptV1> {
+  const startedAt = new Date().toISOString()
+  const packageJson = JSON.parse(
+    await readFile(`${workspace.workerDir}/package.json`, "utf8"),
+  ) as { scripts?: Record<string, string> }
+  if (!packageJson.scripts?.check) {
+    throw new Error("Projektet saknar ett runtime-verifierbart npm-script med namnet check.")
+  }
+  const { stdout, stderr } = await execFileAsync("npm", ["run", "check"], {
+    cwd: workspace.workerDir,
+    encoding: "utf8",
+    timeout: Math.max(1_000, Math.min(timeoutMs, 5 * 60_000)),
+    maxBuffer: 2 * 1024 * 1024,
+    windowsHide: true,
+    env: {
+      PATH: process.env.PATH || "",
+      CI: "1",
+      HOME: "/tmp",
+      npm_config_cache: `/tmp/sajtagent-npm-${workspace.workspaceId}`,
+    },
+  })
+  const summary = `${stdout}\n${stderr}`.trim().replace(/\s+/gu, " ").slice(0, 1_500)
+  return {
+    receiptId: `check:npm:${workspace.workspaceId}`,
+    category: "check",
+    name: "npm run check",
+    status: "passed",
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    summary: summary || "npm run check slutfördes utan fel.",
+  }
 }
 
 export function compileSessionPermissionModeV1(
@@ -317,6 +361,32 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
             accepted.runId,
           )
         }
+        const receipts: EvidenceReceiptV1[] = []
+        if (job.executionPolicy.capabilities.includes("checks.run")) {
+          try {
+            receipts.push(await runWorkspaceCheckV1(workspace, timeoutMs))
+          } catch (error) {
+            return failureReport(
+              job,
+              "worker_check_failed",
+              error instanceof Error ? error.message.slice(0, 1_500) : "Projektkontrollen misslyckades.",
+              false,
+              accepted.runId,
+            )
+          }
+        }
+        const preview = job.executionPolicy.capabilities.includes("preview.manage")
+          ? await findPreviewArtifactV1(workspace)
+          : null
+        if (job.executionPolicy.capabilities.includes("preview.manage") && !preview) {
+          return failureReport(
+            job,
+            "preview_result_missing",
+            "Jobbet begärde preview.manage men ingen verifierbar HTML-preview hittades.",
+            false,
+            accepted.runId,
+          )
+        }
         const now = new Date().toISOString()
         return WorkerReportV1Schema.parse({
           schemaVersion: 1,
@@ -332,6 +402,16 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
               ref: `sprite-worktree:${workspace.workspaceId}`,
               mediaType: "application/vnd.git-diff",
             },
+            ...(preview
+              ? [
+                  {
+                    kind: "preview" as const,
+                    ref: `sprite-worktree:${workspace.workspaceId}:${preview.path}`,
+                    mediaType: "text/html",
+                    sha256: preview.sha256,
+                  },
+                ]
+              : []),
           ],
           receipts: [
             {
@@ -343,6 +423,21 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
               finishedAt: now,
               summary: "Gateway-körningen slutfördes och kandidatens ändrade filer verifierades från Git-workspacet.",
             },
+            ...receipts,
+            ...(preview
+              ? [
+                  {
+                    receiptId: `preview:html:${workspace.workspaceId}`,
+                    category: "preview" as const,
+                    name: "HTML preview artifact",
+                    status: "passed" as const,
+                    startedAt: now,
+                    finishedAt: now,
+                    summary: `Verifierade ${preview.path} som HTML-preview.`,
+                    evidenceRef: `sprite-worktree:${workspace.workspaceId}:${preview.path}`,
+                  },
+                ]
+              : []),
           ],
           diagnostics: diagnosticText(waited.terminalReply)
             ? [

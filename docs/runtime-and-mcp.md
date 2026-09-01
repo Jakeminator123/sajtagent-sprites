@@ -9,6 +9,10 @@ The runtime has two surfaces: a local profile compiler and a signed
 server-owned detached Git worktree per idempotent job, creates a private
 OpenClaw session rooted at that worktree, runs the selected model, and
 normalizes the result into a validated `WorkerReportV1`.
+When `checks.run` is granted, the adapter independently executes the project's
+existing `npm run check` with a scrubbed environment. When `preview.manage` is
+granted, a candidate is accepted only when a bounded HTML preview artifact can
+be found and hashed.
 
 ```powershell
 npm ci
