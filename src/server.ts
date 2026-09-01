@@ -15,6 +15,16 @@ import {
   type WorkerReportV1,
 } from "../contracts/builder-v1.ts"
 import {
+  ARTIFACT_READ_CONTRACT_VERSION_V1,
+  ARTIFACT_READ_PATH_V1,
+  ArtifactReadRequestV1Schema,
+  ArtifactReadResponseV1Schema,
+  MAX_ARTIFACT_READ_REQUEST_BYTES_V1,
+  MAX_ARTIFACT_READ_RESPONSE_BYTES_V1,
+  type ArtifactReadBindingV1,
+  type ArtifactReadRequestV1,
+} from "../contracts/artifact-read-v1.ts"
+import {
   OpenClawGatewayBuildJobRunnerV1,
   UNAVAILABLE_BUILD_JOB_RUNNER_V1,
   type BuildJobRunnerV1,
@@ -37,10 +47,17 @@ import {
   SIGNATURE_HEADERS_V1,
   verifyRuntimeSignatureV1,
 } from "./signing.ts"
+import {
+  artifactReaderRootAvailableV1,
+  parseAuthorizedPreviewRefV1,
+  readAuthorizedPreviewArtifactV1,
+  type AuthorizedPreviewArtifactV1,
+} from "./artifact-reader.ts"
 
 const MAX_BODY_BYTES = 512 * 1024
 const NONCE_RETENTION_MS = 10 * 60_000
 const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60_000
+const ARTIFACT_AUTHORIZATION_RETENTION_MS = 24 * 60 * 60_000
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://127.0.0.1:3000",
   "http://localhost:3000",
@@ -87,13 +104,16 @@ function sendJson(
   response.end(JSON.stringify(value))
 }
 
-async function readBody(request: IncomingMessage): Promise<string> {
+async function readBody(
+  request: IncomingMessage,
+  maxBytes = MAX_BODY_BYTES,
+): Promise<string> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += buffer.length
-    if (size > MAX_BODY_BYTES) {
+    if (size > maxBytes) {
       throw new Error("request_too_large")
     }
     chunks.push(buffer)
@@ -167,6 +187,111 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
     { bodyDigest: string; expiresAt: number; sessionId: string }
   >()
   const activeTurnSessions = new Set<string>()
+  const artifactAuthorizations = new Map<string, AuthorizedPreviewArtifactV1>()
+  const artifactReadRequests = new Map<
+    string,
+    { bodyDigest: string; expiresAt: number }
+  >()
+
+  function artifactAuthorizationKey(
+    binding: ArtifactReadBindingV1,
+    artifactRef: string,
+  ): string {
+    return [
+      binding.tenantId,
+      binding.projectId,
+      binding.jobId,
+      binding.baseRevisionId,
+      binding.sourceRunId,
+      binding.candidateRevisionId,
+      binding.reportedAt,
+      artifactRef,
+    ].join("\0")
+  }
+
+  function removeExpiredArtifactState(now: number): void {
+    for (const [key, value] of artifactAuthorizations) {
+      if (value.expiresAt <= now) artifactAuthorizations.delete(key)
+    }
+    for (const [key, value] of artifactReadRequests) {
+      if (value.expiresAt <= now) artifactReadRequests.delete(key)
+    }
+  }
+
+  function authorizeCandidatePreview(
+    job: BuildJobV1,
+    report: WorkerReportV1,
+    recordedAt: number,
+  ): void {
+    if (
+      report.status !== "candidate" ||
+      report.jobId !== job.jobId ||
+      report.baseRevisionId !== job.baseRevisionId ||
+      !job.executionPolicy.capabilities.includes("preview.manage")
+    ) {
+      return
+    }
+    const previewArtifacts = report.artifacts.filter(
+      (artifact) => artifact.kind === "preview",
+    )
+    const preview = previewArtifacts[0]
+    if (
+      previewArtifacts.length !== 1 ||
+      !preview ||
+      preview.mediaType !== "text/html" ||
+      !preview.sha256
+    ) {
+      return
+    }
+    const parsedRef = parseAuthorizedPreviewRefV1(preview.ref)
+    if (!parsedRef) return
+    const expiresAt = Math.min(
+      Date.parse(job.expiresAt),
+      recordedAt + ARTIFACT_AUTHORIZATION_RETENTION_MS,
+    )
+    if (!Number.isFinite(expiresAt) || expiresAt <= recordedAt) return
+    const binding: ArtifactReadBindingV1 = {
+      tenantId: job.tenantId,
+      projectId: job.projectId,
+      jobId: report.jobId,
+      baseRevisionId: report.baseRevisionId,
+      sourceRunId: report.sourceRunId,
+      candidateRevisionId: report.candidateRevisionId,
+      reportedAt: report.reportedAt,
+    }
+    const authorization: AuthorizedPreviewArtifactV1 = {
+      binding,
+      artifact: {
+        kind: "preview",
+        ref: preview.ref,
+        relativePath: parsedRef.relativePath,
+        mediaType: "text/html",
+        sha256: preview.sha256,
+      },
+      expiresAt,
+    }
+    artifactAuthorizations.set(
+      artifactAuthorizationKey(binding, preview.ref),
+      authorization,
+    )
+  }
+
+  function exactArtifactRequest(
+    request: ArtifactReadRequestV1,
+    authorization: AuthorizedPreviewArtifactV1,
+  ): boolean {
+    return (
+      JSON.stringify(request.binding) === JSON.stringify(authorization.binding) &&
+      request.artifact.kind === authorization.artifact.kind &&
+      request.artifact.ref === authorization.artifact.ref &&
+      request.artifact.mediaType === authorization.artifact.mediaType &&
+      request.artifact.sha256 === authorization.artifact.sha256
+    )
+  }
+
+  function sendArtifactUnavailable(response: ServerResponse): void {
+    sendJson(response, 404, { error: "artifact_unavailable" })
+  }
 
   function reportStatus(report: WorkerReportV1): number {
     if (report.status === "candidate") return 200
@@ -262,6 +387,9 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         const turnGatewayHealth = Object.is(runner, turnRunner)
           ? gatewayHealth
           : await turnRunner.health()
+        const artifactReaderAvailable = await artifactReaderRootAvailableV1(
+          options.workersRoot,
+        )
         sendJson(
           response,
           200,
@@ -276,7 +404,10 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             agentTurnStreamTransport: "sse",
             agentTurnStreamEnabled: Boolean(options.signingKey && turnGatewayHealth.connected),
             agentTurnCapabilities: RUNTIME_AGENT_TURN_CAPABILITIES_V1,
-            artifactReadEnabled: false,
+            artifactReadContractVersion: ARTIFACT_READ_CONTRACT_VERSION_V1,
+            artifactReadEnabled: Boolean(
+              options.signingKey && artifactReaderAvailable,
+            ),
           },
           corsHeaders,
         )
@@ -301,6 +432,109 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         const profile = AgentProfileV1Schema.parse(input.profile)
         const bundle = compilePortableOpenClawBundleV1(profile, options.ceiling)
         sendJson(response, 200, bundle, corsHeaders)
+        return
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === ARTIFACT_READ_PATH_V1 &&
+        url.search === ""
+      ) {
+        const contentType = request.headers["content-type"]
+        if (
+          typeof contentType !== "string" ||
+          contentType.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+        ) {
+          sendJson(response, 400, { error: "invalid_request" })
+          return
+        }
+
+        let body: string
+        try {
+          body = await readBody(request, MAX_ARTIFACT_READ_REQUEST_BYTES_V1)
+        } catch {
+          sendJson(response, 413, { error: "invalid_request" })
+          return
+        }
+        const signed = requireSignature(request, ARTIFACT_READ_PATH_V1, body)
+        if (!signed.ok) {
+          sendJson(response, signed.status, { error: "unauthorized" })
+          return
+        }
+
+        let decoded: unknown
+        try {
+          decoded = JSON.parse(body)
+        } catch {
+          sendJson(response, 400, { error: "invalid_request" })
+          return
+        }
+        const parsedRequest = ArtifactReadRequestV1Schema.safeParse(decoded)
+        if (!parsedRequest.success) {
+          sendJson(response, 400, { error: "invalid_request" })
+          return
+        }
+        const input = parsedRequest.data
+        const now = Date.now()
+        removeExpiredArtifactState(now)
+        const bodyDigest = createHash("sha256")
+          .update(JSON.stringify(input))
+          .digest("hex")
+        const existingRead = artifactReadRequests.get(input.readIdempotencyKey)
+        if (existingRead && existingRead.bodyDigest !== bodyDigest) {
+          sendJson(response, 409, { error: "artifact_read_idempotency_conflict" })
+          return
+        }
+
+        const authorization = artifactAuthorizations.get(
+          artifactAuthorizationKey(input.binding, input.artifact.ref),
+        )
+        if (!authorization || !exactArtifactRequest(input, authorization)) {
+          sendArtifactUnavailable(response)
+          return
+        }
+        if (!existingRead) {
+          artifactReadRequests.set(input.readIdempotencyKey, {
+            bodyDigest,
+            expiresAt: Math.min(
+              authorization.expiresAt,
+              now + IDEMPOTENCY_RETENTION_MS,
+            ),
+          })
+        }
+
+        try {
+          const value = await readAuthorizedPreviewArtifactV1(
+            options.workersRoot || "",
+            authorization,
+            input.maxBytes,
+          )
+          const result = ArtifactReadResponseV1Schema.parse({
+            schemaVersion: ARTIFACT_READ_CONTRACT_VERSION_V1,
+            readIdempotencyKey: input.readIdempotencyKey,
+            binding: authorization.binding,
+            maxBytes: input.maxBytes,
+            artifact: {
+              ...authorization.artifact,
+              sizeBytes: value.sizeBytes,
+              encoding: "base64",
+              bytesBase64: value.bytes.toString("base64"),
+            },
+          })
+          const serialized = JSON.stringify(result)
+          const serializedBytes = Buffer.byteLength(serialized, "utf8")
+          if (serializedBytes > MAX_ARTIFACT_READ_RESPONSE_BYTES_V1) {
+            sendArtifactUnavailable(response)
+            return
+          }
+          response.writeHead(200, {
+            ...responseHeaders(),
+            "content-length": String(serializedBytes),
+          })
+          response.end(serialized)
+        } catch {
+          sendArtifactUnavailable(response)
+        }
         return
       }
 
@@ -332,6 +566,8 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
           })
         }
         const report = WorkerReportV1Schema.parse(await reportPromise)
+        removeExpiredArtifactState(now)
+        authorizeCandidatePreview(job, report, now)
         sendJson(response, reportStatus(report), report, corsHeaders)
         return
       }

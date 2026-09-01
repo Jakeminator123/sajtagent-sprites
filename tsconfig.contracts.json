@@ -15,6 +15,7 @@
   "include": [
     "contracts/**/*.ts",
     "scripts/verify-agent-session-contract.mts",
+    "scripts/verify-artifact-read-contract.mts",
     "scripts/verify-builder-contracts.mts"
   ]
 }
