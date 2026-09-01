@@ -13,7 +13,8 @@
     "npm": "11.19.0"
   },
   "scripts": {
-    "check:contracts": "node scripts/verify-builder-contracts.mts && tsc -p tsconfig.contracts.json",
+    "check:contracts": "node scripts/verify-builder-contracts.mts && node scripts/verify-agent-session-contract.mts && tsc -p tsconfig.contracts.json",
+    "check:agent-session": "node scripts/verify-agent-session-contract.mts && tsc -p tsconfig.agent-session.json",
     "check:runtime": "node scripts/verify-local-runtime.mts && tsc -p tsconfig.runtime.json",
     "dev:runtime": "node src/server.ts",
     "profile:materialize": "node scripts/materialize-openclaw-profile.mts"

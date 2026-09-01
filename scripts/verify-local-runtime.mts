@@ -9,10 +9,17 @@ import {
   DEFAULT_LOCAL_AGENT_CEILING_V1,
 } from "../contracts/agent-profile-v1.ts"
 import {
+  AgentEventV1Schema,
+  validateAgentTurnAgainstPolicyV1,
+} from "../contracts/agent-session-v1.ts"
+import {
   createRuntimeServer,
   resolveRuntimeServerOptions,
 } from "../src/server.ts"
-import { routeBuildJobModelV1 } from "../src/model-routing.ts"
+import {
+  routeAgentTurnModelV1,
+  routeBuildJobModelV1,
+} from "../src/model-routing.ts"
 import { compileSessionPermissionModeV1 } from "../src/openclaw-gateway.ts"
 import {
   SIGNATURE_HEADERS_V1,
@@ -20,8 +27,39 @@ import {
 } from "../src/signing.ts"
 import { materializeOpenClawProfileV1 } from "../src/materialize-profile.ts"
 import { parseGitStatusPathsV1 } from "../src/workspace.ts"
+import {
+  MAX_AGENT_EVENT_SSE_BYTES_V1,
+  MAX_AGENT_TURN_EVENTS_V1,
+  MAX_AGENT_TURN_SSE_BYTES_V1,
+  compileConversationOnlyOpenClawToolPolicyV1,
+  createOpenClawAgentNormalizerStateV1,
+  normalizeOpenClawGatewayEventV1,
+  type AgentTurnRunnerV1,
+  type RuntimeAgentTurnIngressV1,
+} from "../src/agent-turn.ts"
 
 const signingKey = "local-test-key-that-is-at-least-32-characters-long"
+assert.equal(MAX_AGENT_TURN_EVENTS_V1, 4_096)
+assert.equal(MAX_AGENT_EVENT_SSE_BYTES_V1, 32 * 1024)
+assert.equal(MAX_AGENT_TURN_SSE_BYTES_V1, 4 * 1024 * 1024)
+assert.deepEqual(compileConversationOnlyOpenClawToolPolicyV1(), {
+  inheritedToolPolicyVersion: 1,
+  inheritedToolAllow: [],
+  inheritedToolDeny: ["*"],
+})
+const fakeTurnRunner = {
+  async health() {
+    return { connected: true, runtimeVersion: "openclaw-test" }
+  },
+  async runTurn(_input, emit) {
+    emit({ type: "agent.status", payload: { state: "thinking" } })
+    emit({
+      type: "message.delta",
+      payload: { messageId: "message:local-test", delta: "Hej från OpenClaw" },
+    })
+    emit({ type: "turn.completed", payload: { outcome: "answered" } })
+  },
+} satisfies AgentTurnRunnerV1
 assert.deepEqual(parseGitStatusPathsV1(" M index.html\n?? preview.html"), [
   "index.html",
   "preview.html",
@@ -47,6 +85,7 @@ const server = createRuntimeServer({
   signingKey,
   allowedOrigins: [allowedOrigin],
   ceiling: DEFAULT_LOCAL_AGENT_CEILING_V1,
+  turnRunner: fakeTurnRunner,
 })
 
 await new Promise<void>((resolve, reject) => {
@@ -64,7 +103,20 @@ try {
   })
   assert.equal(health.status, 200)
   assert.equal(health.headers.get("access-control-allow-origin"), allowedOrigin)
-  assert.equal((await health.json() as { openClawConnected: boolean }).openClawConnected, false)
+  const healthBody = await health.json() as {
+    openClawConnected: boolean
+    agentSessionContractVersion: number
+    agentTurnStreamTransport: string
+    agentTurnStreamEnabled: boolean
+    agentTurnCapabilities: string[]
+    artifactReadEnabled: boolean
+  }
+  assert.equal(healthBody.openClawConnected, false)
+  assert.equal(healthBody.agentSessionContractVersion, 1)
+  assert.equal(healthBody.agentTurnStreamTransport, "sse")
+  assert.equal(healthBody.agentTurnStreamEnabled, true)
+  assert.deepEqual(healthBody.agentTurnCapabilities, ["conversation.respond"])
+  assert.equal(healthBody.artifactReadEnabled, false)
 
   const blockedOrigin = await fetch(`${baseUrl}/health`, {
     headers: { Origin: "https://attacker.example" },
@@ -94,6 +146,205 @@ try {
     body: JSON.stringify({ profile: { schemaVersion: 1 } }),
   })
   assert.equal(invalidProfile.status, 400)
+
+  const sessionCreatedAt = new Date()
+  const turnPolicyExpiresAt = new Date(sessionCreatedAt.getTime() + 10 * 60_000)
+  const directTurn: RuntimeAgentTurnIngressV1 = {
+    schemaVersion: 1,
+    session: {
+      schemaVersion: 1,
+      sessionId: "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+      projectId: "project:test",
+      activeBaseRevisionId: "revision:base",
+      status: "active",
+      createdAt: sessionCreatedAt.toISOString(),
+      updatedAt: sessionCreatedAt.toISOString(),
+    },
+    turn: {
+      schemaVersion: 1,
+      sessionId: "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+      turnId: "turn:abcdefghijklmnop",
+      idempotencyKey: "idempotency:agent-turn-local-test",
+      message: "Vad är klockan?",
+      uiContext: {
+        selectedBaseRevisionId: "revision:base",
+        mode: "freeform",
+      },
+    },
+    policy: {
+      schemaVersion: 1,
+      sessionId: "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+      turnId: "turn:abcdefghijklmnop",
+      projectId: "project:test",
+      baseRevisionId: "revision:base",
+      issuedAt: sessionCreatedAt.toISOString(),
+      expiresAt: turnPolicyExpiresAt.toISOString(),
+      capabilities: ["conversation.respond"],
+      allowedMutationIntents: [],
+      maxToolCalls: 0,
+      maxModelTokens: 10_000,
+      maxCostMicros: 100_000,
+    },
+    baseSequence: 40,
+  }
+
+  assert.equal(
+    routeAgentTurnModelV1(directTurn.turn, directTurn.policy).model,
+    "openai/gpt-5.6-luna",
+  )
+  const routineDirectTurn = structuredClone(directTurn)
+  routineDirectTurn.turn.message = "x".repeat(600)
+  routineDirectTurn.policy.maxModelTokens = 60_000
+  assert.equal(
+    routeAgentTurnModelV1(routineDirectTurn.turn, routineDirectTurn.policy).model,
+    "openai/gpt-5.6-terra",
+  )
+  const deepDirectTurn = structuredClone(routineDirectTurn)
+  deepDirectTurn.turn.uiContext.mode = "audit"
+  deepDirectTurn.policy.maxModelTokens = 250_000
+  assert.deepEqual(
+    {
+      model: routeAgentTurnModelV1(deepDirectTurn.turn, deepDirectTurn.policy).model,
+      thinking: routeAgentTurnModelV1(deepDirectTurn.turn, deepDirectTurn.policy).thinkingLevel,
+    },
+    { model: "openai/gpt-5.6-sol", thinking: "xhigh" },
+  )
+
+  const unsignedTurn = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(directTurn),
+  })
+  assert.equal(unsignedTurn.status, 401)
+
+  const turnBody = JSON.stringify(directTurn)
+  const turnTimestamp = new Date().toISOString()
+  const turnNonce = randomUUID()
+  const turnSignature = signRuntimeRequestV1(
+    {
+      method: "POST",
+      pathname: "/v1/agent-turns",
+      timestamp: turnTimestamp,
+      nonce: turnNonce,
+      body: turnBody,
+    },
+    signingKey,
+  )
+  const turnResponse = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [SIGNATURE_HEADERS_V1.timestamp]: turnTimestamp,
+      [SIGNATURE_HEADERS_V1.nonce]: turnNonce,
+      [SIGNATURE_HEADERS_V1.signature]: turnSignature,
+    },
+    body: turnBody,
+  })
+  assert.equal(turnResponse.status, 200)
+  assert.match(turnResponse.headers.get("content-type") || "", /^text\/event-stream/)
+  assert.equal(turnResponse.headers.get("cache-control"), "no-store")
+  const frames = (await turnResponse.text()).trim().split("\n\n")
+  const agentEvents = frames.map((frame) => {
+    const data = frame.split("\n").find((line) => line.startsWith("data: "))
+    assert(data)
+    return AgentEventV1Schema.parse(JSON.parse(data.slice("data: ".length)))
+  })
+  assert.deepEqual(agentEvents.map((event) => event.sequence), [41, 42, 43, 44])
+  assert.deepEqual(agentEvents.map((event) => event.type), [
+    "turn.accepted",
+    "agent.status",
+    "message.delta",
+    "turn.completed",
+  ])
+  assert.equal(validateAgentTurnAgainstPolicyV1(
+    directTurn.session,
+    directTurn.policy,
+    agentEvents,
+    { baseSequence: directTurn.baseSequence },
+  ).success, true)
+
+  const retryTimestamp = new Date().toISOString()
+  const retryNonce = randomUUID()
+  const retriedTurn = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [SIGNATURE_HEADERS_V1.timestamp]: retryTimestamp,
+      [SIGNATURE_HEADERS_V1.nonce]: retryNonce,
+      [SIGNATURE_HEADERS_V1.signature]: signRuntimeRequestV1(
+        {
+          method: "POST",
+          pathname: "/v1/agent-turns",
+          timestamp: retryTimestamp,
+          nonce: retryNonce,
+          body: turnBody,
+        },
+        signingKey,
+      ),
+    },
+    body: turnBody,
+  })
+  assert.equal(retriedTurn.status, 409)
+  assert.equal(
+    (await retriedTurn.json() as { error: string }).error,
+    "agent_turn_already_started_use_site_resume",
+  )
+
+  const normalizerState = createOpenClawAgentNormalizerStateV1()
+  const normalizeContext = {
+    runId: "openclaw-run:test",
+    turnId: directTurn.turn.turnId,
+    capabilities: directTurn.policy.capabilities,
+    state: normalizerState,
+  }
+  assert.equal(normalizeOpenClawGatewayEventV1({
+    event: "agent",
+    payload: {
+      runId: "openclaw-run:test",
+      seq: 0,
+      stream: "lifecycle",
+      ts: Date.now(),
+      data: { phase: "start" },
+    },
+  }, normalizeContext)[0]?.type, "agent.status")
+  const firstAssistantDelta = normalizeOpenClawGatewayEventV1({
+    event: "agent",
+    payload: {
+      runId: "openclaw-run:test",
+      seq: 1,
+      stream: "assistant",
+      ts: Date.now(),
+      data: { text: "Hej", delta: "Hej" },
+    },
+  }, normalizeContext)[0]
+  assert.equal(firstAssistantDelta?.type, "message.delta")
+  assert.equal(firstAssistantDelta?.type === "message.delta"
+    ? firstAssistantDelta.payload.delta
+    : undefined, "Hej")
+  const secondAssistantDelta = normalizeOpenClawGatewayEventV1({
+    event: "agent",
+    payload: {
+      runId: "openclaw-run:test",
+      seq: 2,
+      stream: "assistant",
+      ts: Date.now(),
+      data: { text: "Hej där" },
+    },
+  }, normalizeContext)[0]
+  assert.equal(secondAssistantDelta?.type, "message.delta")
+  assert.equal(secondAssistantDelta?.type === "message.delta"
+    ? secondAssistantDelta.payload.delta
+    : undefined, " där")
+  assert.throws(() => normalizeOpenClawGatewayEventV1({
+    event: "agent",
+    payload: {
+      runId: "openclaw-run:test",
+      seq: 3,
+      stream: "tool",
+      ts: Date.now(),
+      data: { phase: "start", name: "exec", toolCallId: "tool-call-1" },
+    },
+  }, normalizeContext), /openclaw_unauthorized_tool_event/)
 
   const createdAt = new Date()
   const expiresAt = new Date(createdAt.getTime() + 10 * 60_000)

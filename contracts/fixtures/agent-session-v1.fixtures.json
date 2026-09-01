@@ -1,0 +1,1191 @@
+{
+  "schemaCases": [
+    {
+      "name": "valid active Site-owned session",
+      "schema": "AgentSessionV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "projectId": "project:one",
+        "activeBaseRevisionId": "revision:base",
+        "status": "active",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "updatedAt": "2026-09-01T12:00:00.000Z"
+      }
+    },
+    {
+      "name": "session cannot expose tenant binding",
+      "schema": "AgentSessionV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "projectId": "project:one",
+        "activeBaseRevisionId": "revision:base",
+        "status": "active",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "updatedAt": "2026-09-01T12:00:00.000Z",
+        "tenantId": "tenant:browser-selected"
+      }
+    },
+    {
+      "name": "session id must be high entropy",
+      "schema": "AgentSessionV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:short",
+        "projectId": "project:one",
+        "activeBaseRevisionId": "revision:base",
+        "status": "active",
+        "createdAt": "2026-09-01T12:00:00.000Z",
+        "updatedAt": "2026-09-01T12:00:00.000Z"
+      }
+    },
+    {
+      "name": "valid browser-safe simple turn",
+      "schema": "AgentTurnRequestV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "idempotencyKey": "turn-request:one",
+        "message": "Vad är klockan?",
+        "uiContext": {
+          "selectedBaseRevisionId": "revision:base",
+          "mode": "freeform"
+        }
+      }
+    },
+    {
+      "name": "browser turn cannot name runtime tool",
+      "schema": "AgentTurnRequestV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "idempotencyKey": "turn-request:tool",
+        "message": "Ändra rubriken.",
+        "uiContext": {
+          "selectedBaseRevisionId": "revision:base"
+        },
+        "openClawTool": "exec"
+      }
+    },
+    {
+      "name": "valid browser answer to explicit question",
+      "schema": "AgentTurnRequestV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:questionanswer01",
+        "idempotencyKey": "turn-request:answer",
+        "message": "Varm",
+        "replyToQuestionId": "brand_tone",
+        "answerSelections": ["Varm"],
+        "uiContext": {
+          "selectedBaseRevisionId": "revision:base"
+        }
+      }
+    },
+    {
+      "name": "question answer selections require a question id",
+      "schema": "AgentTurnRequestV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:questionanswer02",
+        "idempotencyKey": "turn-request:answer-without-id",
+        "message": "Varm",
+        "answerSelections": ["Varm"],
+        "uiContext": {
+          "selectedBaseRevisionId": "revision:base"
+        }
+      }
+    },
+    {
+      "name": "valid zero-tool conversation policy",
+      "schema": "AgentTurnPolicyV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:02:00.000Z",
+        "capabilities": ["conversation.respond"],
+        "allowedMutationIntents": [],
+        "maxToolCalls": 0,
+        "maxModelTokens": 4000,
+        "maxCostMicros": 100000
+      }
+    },
+    {
+      "name": "valid bounded mutation policy",
+      "schema": "AgentTurnPolicyV1",
+      "expectValid": true,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:10:00.000Z",
+        "capabilities": [
+          "conversation.respond",
+          "project.read",
+          "checks.run",
+          "build.request"
+        ],
+        "allowedMutationIntents": ["site.create", "site.change"],
+        "maxToolCalls": 80,
+        "maxModelTokens": 200000,
+        "maxCostMicros": 5000000
+      }
+    },
+    {
+      "name": "mutation intents require mutation capability",
+      "schema": "AgentTurnPolicyV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:10:00.000Z",
+        "capabilities": ["conversation.respond", "project.read"],
+        "allowedMutationIntents": ["site.change"],
+        "maxToolCalls": 10,
+        "maxModelTokens": 20000,
+        "maxCostMicros": 500000
+      }
+    },
+    {
+      "name": "every policy must preserve the conversation capability",
+      "schema": "AgentTurnPolicyV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:10:00.000Z",
+        "capabilities": ["project.read"],
+        "allowedMutationIntents": [],
+        "maxToolCalls": 2,
+        "maxModelTokens": 20000,
+        "maxCostMicros": 500000
+      }
+    },
+    {
+      "name": "package installation stays inside BuildJob execution policy",
+      "schema": "AgentTurnPolicyV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:10:00.000Z",
+        "capabilities": ["conversation.respond", "packages.install"],
+        "allowedMutationIntents": [],
+        "maxToolCalls": 2,
+        "maxModelTokens": 20000,
+        "maxCostMicros": 500000
+      }
+    },
+    {
+      "name": "turn policy expires within fifteen minutes",
+      "schema": "AgentTurnPolicyV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:15:00.001Z",
+        "capabilities": ["conversation.respond"],
+        "allowedMutationIntents": [],
+        "maxToolCalls": 0,
+        "maxModelTokens": 20000,
+        "maxCostMicros": 500000
+      }
+    },
+    {
+      "name": "event sequence must be a safe integer",
+      "schema": "AgentEventV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "eventId": "event:0000000000000003",
+        "sequence": 9007199254740992,
+        "occurredAt": "2026-09-01T12:00:00.000Z",
+        "type": "agent.status",
+        "payload": { "state": "thinking" }
+      }
+    },
+    {
+      "name": "browser receipt cannot expose an upstream summary",
+      "schema": "AgentEventV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "eventId": "event:0000000000000004",
+        "sequence": 4,
+        "occurredAt": "2026-09-01T12:00:00.000Z",
+        "type": "tool.completed",
+        "payload": {
+          "toolCallId": "tool:one",
+          "status": "passed",
+          "receipts": [
+            {
+              "receiptId": "receipt:one",
+              "category": "tool",
+              "safeLabel": "Verktyget kördes",
+              "status": "passed",
+              "startedAt": "2026-09-01T11:59:59.000Z",
+              "finishedAt": "2026-09-01T12:00:00.000Z",
+              "summary": "upstream output"
+            }
+          ],
+          "artifacts": []
+        }
+      }
+    },
+    {
+      "name": "tool event cannot expose raw command output",
+      "schema": "AgentEventV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "eventId": "event:0000000000000001",
+        "sequence": 1,
+        "occurredAt": "2026-09-01T12:00:00.000Z",
+        "type": "tool.completed",
+        "payload": {
+          "toolCallId": "tool:one",
+          "status": "passed",
+          "receipts": [],
+          "artifacts": [],
+          "rawOutput": "secret command output"
+        }
+      }
+    },
+    {
+      "name": "browser event rejects OpenClaw secret input fields",
+      "schema": "AgentEventV1",
+      "expectValid": false,
+      "value": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:abcdefghijklmnop",
+        "eventId": "event:0000000000000002",
+        "sequence": 2,
+        "occurredAt": "2026-09-01T12:00:00.000Z",
+        "type": "question.requested",
+        "payload": {
+          "questionId": "api_key",
+          "header": "API-nyckel",
+          "question": "Klistra in hemligheten",
+          "options": [],
+          "isSecret": true
+        }
+      }
+    }
+  ],
+  "policyCases": [
+    {
+      "name": "zero-tool policy authorizes a plain answer",
+      "expectValid": true,
+      "session": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "projectId": "project:one",
+        "activeBaseRevisionId": "revision:base",
+        "status": "active",
+        "createdAt": "2026-09-01T11:59:00.000Z",
+        "updatedAt": "2026-09-01T12:00:00.000Z"
+      },
+      "policy": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:policyanswer0001",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:02:00.000Z",
+        "capabilities": ["conversation.respond"],
+        "allowedMutationIntents": [],
+        "maxToolCalls": 0,
+        "maxModelTokens": 4000,
+        "maxCostMicros": 100000
+      },
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyanswer0001",
+          "eventId": "event:e000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:00:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyanswer0001",
+          "eventId": "event:e000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:00:00.010Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:policy-answer", "delta": "Hej!" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyanswer0001",
+          "eventId": "event:e000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:00:00.020Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        }
+      ]
+    },
+    {
+      "name": "zero-tool policy rejects an ungranted read tool",
+      "expectValid": false,
+      "session": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "projectId": "project:one",
+        "activeBaseRevisionId": "revision:base",
+        "status": "active",
+        "createdAt": "2026-09-01T11:59:00.000Z",
+        "updatedAt": "2026-09-01T12:00:00.000Z"
+      },
+      "policy": {
+        "schemaVersion": 1,
+        "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+        "turnId": "turn:policyread000001",
+        "projectId": "project:one",
+        "baseRevisionId": "revision:base",
+        "issuedAt": "2026-09-01T12:00:00.000Z",
+        "expiresAt": "2026-09-01T12:02:00.000Z",
+        "capabilities": ["conversation.respond"],
+        "allowedMutationIntents": [],
+        "maxToolCalls": 0,
+        "maxModelTokens": 4000,
+        "maxCostMicros": 100000
+      },
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyread000001",
+          "eventId": "event:f000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:00:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyread000001",
+          "eventId": "event:f000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:00:00.010Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:ungranted-read",
+            "capability": "project.read",
+            "safeLabel": "Läser projektet"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyread000001",
+          "eventId": "event:f000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:00:00.020Z",
+          "type": "tool.completed",
+          "payload": {
+            "toolCallId": "tool:ungranted-read",
+            "status": "passed",
+            "receipts": [],
+            "artifacts": []
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyread000001",
+          "eventId": "event:f000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:00:00.030Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:ungranted", "delta": "Läst." }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:policyread000001",
+          "eventId": "event:f000000000000005",
+          "sequence": 5,
+          "occurredAt": "2026-09-01T12:00:00.040Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        }
+      ]
+    }
+  ],
+  "streamCases": [
+    {
+      "name": "simple answer never creates a build",
+      "expectValid": true,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:abcdefghijklmnop",
+          "eventId": "event:0000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:00:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:abcdefghijklmnop",
+          "eventId": "event:0000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:00:00.010Z",
+          "type": "agent.status",
+          "payload": { "state": "thinking", "label": "Sajtagent tänker" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:abcdefghijklmnop",
+          "eventId": "event:0000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:00:00.020Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:one", "delta": "Klockan är 14:00." }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:abcdefghijklmnop",
+          "eventId": "event:0000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:00:00.030Z",
+          "type": "agent.status",
+          "payload": { "state": "idle" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:abcdefghijklmnop",
+          "eventId": "event:0000000000000005",
+          "sequence": 5,
+          "occurredAt": "2026-09-01T12:00:00.040Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        }
+      ]
+    },
+    {
+      "name": "session history keeps one sequence across turns",
+      "validation": "session-history",
+      "expectValid": true,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:history000000001",
+          "eventId": "event:9000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:00:10.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:00:10.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:history000000001",
+          "eventId": "event:9000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:00:10.010Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:history-one", "delta": "Första svaret." }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:history000000001",
+          "eventId": "event:9000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:00:10.020Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:history000000002",
+          "eventId": "event:9000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:00:11.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:00:11.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:history000000002",
+          "eventId": "event:9000000000000005",
+          "sequence": 5,
+          "occurredAt": "2026-09-01T12:00:11.010Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:history-two", "delta": "Andra svaret." }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:history000000002",
+          "eventId": "event:9000000000000006",
+          "sequence": 6,
+          "occurredAt": "2026-09-01T12:00:11.020Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        }
+      ]
+    },
+    {
+      "name": "explicit question pauses until next turn",
+      "expectValid": true,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000002",
+          "eventId": "event:1000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:01:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:01:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000002",
+          "eventId": "event:1000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:01:00.010Z",
+          "type": "question.requested",
+          "payload": {
+            "questionId": "brand_tone",
+            "header": "Tonalitet",
+            "question": "Vill du ha en varm eller strikt tonalitet?",
+            "options": [
+              {
+                "label": "Varm",
+                "description": "Mänsklig och välkomnande."
+              },
+              { "label": "Strikt" }
+            ],
+            "multiSelect": false,
+            "isOther": true
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000002",
+          "eventId": "event:1000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:01:00.020Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "awaiting_user" }
+        }
+      ]
+    },
+    {
+      "name": "authorized build produces canonical preview",
+      "expectValid": true,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000003",
+          "eventId": "event:2000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:02:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:02:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000003",
+          "eventId": "event:2000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:02:00.010Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:build-one",
+            "capability": "build.request",
+            "safeLabel": "Bygger sajten"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000003",
+          "eventId": "event:2000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:02:00.020Z",
+          "type": "build.started",
+          "payload": {
+            "jobId": "job:one",
+            "toolCallId": "tool:build-one",
+            "intentType": "site.change"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000003",
+          "eventId": "event:2000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:02:10.000Z",
+          "type": "tool.completed",
+          "payload": {
+            "toolCallId": "tool:build-one",
+            "status": "passed",
+            "receipts": [
+              {
+                "receiptId": "receipt:check-one",
+                "category": "check",
+                "safeLabel": "Project check",
+                "status": "passed",
+                "startedAt": "2026-09-01T12:02:05.000Z",
+                "finishedAt": "2026-09-01T12:02:09.000Z"
+              }
+            ],
+            "artifacts": [
+              {
+                "kind": "preview",
+                "ref": "artifact:preview0000000001",
+                "mediaType": "text/html",
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ]
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000003",
+          "eventId": "event:2000000000000005",
+          "sequence": 5,
+          "occurredAt": "2026-09-01T12:02:11.000Z",
+          "type": "preview.ready",
+          "payload": {
+            "jobId": "job:one",
+            "result": {
+              "schemaVersion": 1,
+              "status": "succeeded",
+              "jobId": "job:one",
+              "baseRevisionId": "revision:base",
+              "workspaceRevisionId": "revision:accepted",
+              "versionId": "version:one",
+              "previewRef": "preview:canonical0000000001",
+              "sitemapRevision": "sitemap:one",
+              "verifiedAt": "2026-09-01T12:02:11.000Z"
+            }
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000003",
+          "eventId": "event:2000000000000006",
+          "sequence": 6,
+          "occurredAt": "2026-09-01T12:02:11.010Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "built" }
+        }
+      ]
+    },
+    {
+      "name": "resume slice starts after persisted sequence",
+      "validation": "resume-batch",
+      "expectValid": true,
+      "afterSequence": 2,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000004",
+          "eventId": "event:3000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:03:00.020Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:resume", "delta": "Återupptaget svar." }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000004",
+          "eventId": "event:3000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:03:00.030Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        }
+      ]
+    },
+    {
+      "name": "sequence gap fails closed",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000005",
+          "eventId": "event:4000000000000001",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:04:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:04:00.000Z" }
+        }
+      ]
+    },
+    {
+      "name": "event after terminal fails closed",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000006",
+          "eventId": "event:5000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:05:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:05:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000006",
+          "eventId": "event:5000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:05:00.010Z",
+          "type": "turn.failed",
+          "payload": { "code": "runtime_error", "message": "Stoppad.", "retryable": true }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000006",
+          "eventId": "event:5000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:05:00.020Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:late", "delta": "För sent." }
+        }
+      ]
+    },
+    {
+      "name": "tool completion requires matching start",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000007",
+          "eventId": "event:6000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:06:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:06:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000007",
+          "eventId": "event:6000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:06:00.010Z",
+          "type": "tool.completed",
+          "payload": { "toolCallId": "tool:missing", "status": "failed", "receipts": [], "artifacts": [] }
+        }
+      ]
+    },
+    {
+      "name": "a turn cannot request two builds",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:twobuilds0000000",
+          "eventId": "event:d000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:06:10.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:06:10.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:twobuilds0000000",
+          "eventId": "event:d000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:06:10.010Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:build-first",
+            "capability": "build.request",
+            "safeLabel": "Första bygget"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:twobuilds0000000",
+          "eventId": "event:d000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:06:10.020Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:build-second",
+            "capability": "build.request",
+            "safeLabel": "Andra bygget"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:twobuilds0000000",
+          "eventId": "event:d000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:06:10.030Z",
+          "type": "turn.failed",
+          "payload": {
+            "code": "too_many_builds",
+            "message": "Endast ett bygge tillåts.",
+            "retryable": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "build request cannot bypass the Site-minted build job",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:missingjob000001",
+          "eventId": "event:c000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:06:20.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:06:20.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:missingjob000001",
+          "eventId": "event:c000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:06:20.010Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:missing-job",
+            "capability": "build.request",
+            "safeLabel": "Begär bygge"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:missingjob000001",
+          "eventId": "event:c000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:06:20.020Z",
+          "type": "tool.completed",
+          "payload": {
+            "toolCallId": "tool:missing-job",
+            "status": "passed",
+            "receipts": [],
+            "artifacts": []
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:missingjob000001",
+          "eventId": "event:c000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:06:20.030Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "no_change" }
+        }
+      ]
+    },
+    {
+      "name": "failed mutation tool cannot publish a preview",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:failedbuild00001",
+          "eventId": "event:a000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:06:30.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:06:30.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:failedbuild00001",
+          "eventId": "event:a000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:06:30.010Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:failed-build",
+            "capability": "build.request",
+            "safeLabel": "Bygger sajten"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:failedbuild00001",
+          "eventId": "event:a000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:06:30.020Z",
+          "type": "build.started",
+          "payload": {
+            "jobId": "job:failed-build",
+            "toolCallId": "tool:failed-build",
+            "intentType": "site.change"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:failedbuild00001",
+          "eventId": "event:a000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:06:30.030Z",
+          "type": "tool.completed",
+          "payload": {
+            "toolCallId": "tool:failed-build",
+            "status": "failed",
+            "receipts": [],
+            "artifacts": []
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:failedbuild00001",
+          "eventId": "event:a000000000000005",
+          "sequence": 5,
+          "occurredAt": "2026-09-01T12:06:30.040Z",
+          "type": "preview.ready",
+          "payload": {
+            "jobId": "job:failed-build",
+            "result": {
+              "schemaVersion": 1,
+              "status": "succeeded",
+              "jobId": "job:failed-build",
+              "baseRevisionId": "revision:base",
+              "workspaceRevisionId": "revision:invalid",
+              "versionId": "version:invalid",
+              "previewRef": "preview:invalid0000000001",
+              "sitemapRevision": "sitemap:invalid",
+              "verifiedAt": "2026-09-01T12:06:30.040Z"
+            }
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:failedbuild00001",
+          "eventId": "event:a000000000000006",
+          "sequence": 6,
+          "occurredAt": "2026-09-01T12:06:30.050Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "built" }
+        }
+      ]
+    },
+    {
+      "name": "built outcome requires canonical preview",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000008",
+          "eventId": "event:7000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:07:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:07:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000008",
+          "eventId": "event:7000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:07:00.010Z",
+          "type": "tool.started",
+          "payload": {
+            "toolCallId": "tool:no-preview",
+            "capability": "build.request",
+            "safeLabel": "Bygger sajten"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000008",
+          "eventId": "event:7000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:07:00.020Z",
+          "type": "build.started",
+          "payload": {
+            "jobId": "job:no-preview",
+            "toolCallId": "tool:no-preview",
+            "intentType": "site.change"
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000008",
+          "eventId": "event:7000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:07:00.030Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "built" }
+        }
+      ]
+    },
+    {
+      "name": "awaiting user requires explicit question",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000009",
+          "eventId": "event:8000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:08:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:08:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:0000000000000009",
+          "eventId": "event:8000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:08:00.010Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "awaiting_user" }
+        }
+      ]
+    },
+    {
+      "name": "a question cannot terminate as answered",
+      "expectValid": false,
+      "events": [
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:wrongoutcome0001",
+          "eventId": "event:b000000000000001",
+          "sequence": 1,
+          "occurredAt": "2026-09-01T12:09:00.000Z",
+          "type": "turn.accepted",
+          "payload": { "acceptedAt": "2026-09-01T12:09:00.000Z" }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:wrongoutcome0001",
+          "eventId": "event:b000000000000002",
+          "sequence": 2,
+          "occurredAt": "2026-09-01T12:09:00.010Z",
+          "type": "question.requested",
+          "payload": {
+            "questionId": "choose_tone",
+            "header": "Tonalitet",
+            "question": "Vilken tonalitet vill du ha?",
+            "options": []
+          }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:wrongoutcome0001",
+          "eventId": "event:b000000000000003",
+          "sequence": 3,
+          "occurredAt": "2026-09-01T12:09:00.020Z",
+          "type": "message.delta",
+          "payload": { "messageId": "message:wrong", "delta": "Välj tonalitet." }
+        },
+        {
+          "schemaVersion": 1,
+          "sessionId": "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+          "turnId": "turn:wrongoutcome0001",
+          "eventId": "event:b000000000000004",
+          "sequence": 4,
+          "occurredAt": "2026-09-01T12:09:00.030Z",
+          "type": "turn.completed",
+          "payload": { "outcome": "answered" }
+        }
+      ]
+    }
+  ]
+}

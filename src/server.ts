@@ -21,6 +21,19 @@ import {
 } from "./openclaw-gateway.ts"
 import { routeBuildJobModelV1 } from "./model-routing.ts"
 import {
+  AGENT_TURN_TERMINAL_RESERVE_BYTES_V1,
+  MAX_AGENT_EVENT_SSE_BYTES_V1,
+  MAX_AGENT_TURN_EVENTS_V1,
+  MAX_AGENT_TURN_SSE_BYTES_V1,
+  RUNTIME_AGENT_TURN_CAPABILITIES_V1,
+  RuntimeAgentTurnIngressV1Schema,
+  UNAVAILABLE_AGENT_TURN_RUNNER_V1,
+  assertRuntimeAgentTurnSupportedV1,
+  createAgentEventEmitterV1,
+  formatAgentEventSseV1,
+  type AgentTurnRunnerV1,
+} from "./agent-turn.ts"
+import {
   SIGNATURE_HEADERS_V1,
   verifyRuntimeSignatureV1,
 } from "./signing.ts"
@@ -44,6 +57,7 @@ export type RuntimeServerOptions = {
   allowedOrigins: string[]
   ceiling: AgentHostCeilingV1
   runner?: BuildJobRunnerV1
+  turnRunner?: AgentTurnRunnerV1
   openClawGatewayUrl?: string
   openClawGatewayToken?: string
   projectsRoot?: string
@@ -143,10 +157,16 @@ export function resolveRuntimeServerOptions(
 export function createRuntimeServer(options: RuntimeServerOptions) {
   const usedNonces = new Map<string, number>()
   const runner = options.runner ?? UNAVAILABLE_BUILD_JOB_RUNNER_V1
+  const turnRunner = options.turnRunner ?? UNAVAILABLE_AGENT_TURN_RUNNER_V1
   const jobRequests = new Map<
     string,
     { bodyDigest: string; expiresAt: number; report: Promise<WorkerReportV1> }
   >()
+  const turnRequests = new Map<
+    string,
+    { bodyDigest: string; expiresAt: number; sessionId: string }
+  >()
+  const activeTurnSessions = new Set<string>()
 
   function reportStatus(report: WorkerReportV1): number {
     if (report.status === "candidate") return 200
@@ -239,6 +259,9 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
     try {
       if (request.method === "GET" && url.pathname === "/health") {
         const gatewayHealth = await runner.health()
+        const turnGatewayHealth = Object.is(runner, turnRunner)
+          ? gatewayHealth
+          : await turnRunner.health()
         sendJson(
           response,
           200,
@@ -249,6 +272,11 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             openClawVersion: gatewayHealth.runtimeVersion,
             openClawReason: gatewayHealth.reason,
             signedJobsEnabled: Boolean(options.signingKey),
+            agentSessionContractVersion: 1,
+            agentTurnStreamTransport: "sse",
+            agentTurnStreamEnabled: Boolean(options.signingKey && turnGatewayHealth.connected),
+            agentTurnCapabilities: RUNTIME_AGENT_TURN_CAPABILITIES_V1,
+            artifactReadEnabled: false,
           },
           corsHeaders,
         )
@@ -308,6 +336,121 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         return
       }
 
+      if (request.method === "POST" && url.pathname === "/v1/agent-turns") {
+        const body = await readBody(request)
+        const signed = requireSignature(request, url.pathname, body)
+        if (!signed.ok) {
+          sendJson(response, signed.status, { error: "unauthorized", message: signed.reason }, corsHeaders)
+          return
+        }
+        const input = RuntimeAgentTurnIngressV1Schema.parse(JSON.parse(body))
+        try {
+          assertRuntimeAgentTurnSupportedV1(input)
+        } catch (error) {
+          sendJson(response, 409, {
+            error: error instanceof Error ? error.message : "agent_turn_not_supported",
+          }, corsHeaders)
+          return
+        }
+
+        const now = Date.now()
+        for (const [key, value] of turnRequests) {
+          if (value.expiresAt <= now) turnRequests.delete(key)
+        }
+        const bodyDigest = createHash("sha256").update(JSON.stringify(input)).digest("hex")
+        const existing = turnRequests.get(input.turn.idempotencyKey)
+        if (existing) {
+          sendJson(response, 409, {
+            error: existing.bodyDigest === bodyDigest
+              ? "agent_turn_already_started_use_site_resume"
+              : "agent_turn_idempotency_conflict",
+          }, corsHeaders)
+          return
+        }
+        if (activeTurnSessions.has(input.session.sessionId)) {
+          sendJson(response, 409, { error: "agent_session_turn_in_progress" }, corsHeaders)
+          return
+        }
+        turnRequests.set(input.turn.idempotencyKey, {
+          bodyDigest,
+          expiresAt: now + IDEMPOTENCY_RETENTION_MS,
+          sessionId: input.session.sessionId,
+        })
+        activeTurnSessions.add(input.session.sessionId)
+
+        response.writeHead(200, {
+          "cache-control": "no-store",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream; charset=utf-8",
+          "x-accel-buffering": "no",
+          "x-content-type-options": "nosniff",
+          ...corsHeaders,
+        })
+        response.flushHeaders()
+        let streamedEventCount = 0
+        let streamedBytes = 0
+        const emitter = createAgentEventEmitterV1(input, (event) => {
+          const frame = formatAgentEventSseV1(event)
+          const frameBytes = Buffer.byteLength(frame, "utf8")
+          const terminal = event.type === "turn.completed" || event.type === "turn.failed"
+          if (frameBytes > MAX_AGENT_EVENT_SSE_BYTES_V1) {
+            throw new Error("agent_event_sse_too_large")
+          }
+          if (
+            !terminal &&
+            (streamedEventCount >= MAX_AGENT_TURN_EVENTS_V1 - 1 ||
+              streamedBytes + frameBytes >
+                MAX_AGENT_TURN_SSE_BYTES_V1 - AGENT_TURN_TERMINAL_RESERVE_BYTES_V1)
+          ) {
+            throw new Error("agent_turn_sse_limit_reached")
+          }
+          if (
+            terminal &&
+            (streamedEventCount >= MAX_AGENT_TURN_EVENTS_V1 ||
+              streamedBytes + frameBytes > MAX_AGENT_TURN_SSE_BYTES_V1)
+          ) {
+            throw new Error("agent_turn_terminal_sse_limit_reached")
+          }
+          streamedEventCount += 1
+          streamedBytes += frameBytes
+          response.write(frame)
+        })
+        const acceptedAt = new Date().toISOString()
+        emitter.emit({
+          type: "turn.accepted",
+          occurredAt: acceptedAt,
+          payload: { acceptedAt },
+        })
+        try {
+          await turnRunner.runTurn(input, (event) => emitter.emit(event))
+          if (!emitter.terminal) {
+            emitter.emit({
+              type: "turn.failed",
+              payload: {
+                code: "agent_turn_stream_incomplete",
+                message: "Agentkörningen avslutades utan en terminal händelse.",
+                retryable: true,
+              },
+            })
+          }
+        } catch {
+          if (!emitter.terminal) {
+            emitter.emit({
+              type: "turn.failed",
+              payload: {
+                code: "agent_turn_runtime_error",
+                message: "Agentkörningen misslyckades i Runtime.",
+                retryable: true,
+              },
+            })
+          }
+        } finally {
+          activeTurnSessions.delete(input.session.sessionId)
+          response.end()
+        }
+        return
+      }
+
       sendJson(response, 404, { error: "not_found" }, corsHeaders)
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid request"
@@ -320,11 +463,7 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
 export async function startRuntimeServer(
   options: RuntimeServerOptions = resolveRuntimeServerOptions(),
 ) {
-  const effectiveOptions: RuntimeServerOptions = options.runner
-    ? options
-    : {
-        ...options,
-        runner: new OpenClawGatewayBuildJobRunnerV1({
+  const gatewayRunner = new OpenClawGatewayBuildJobRunnerV1({
           gatewayUrl: options.openClawGatewayUrl || "ws://127.0.0.1:18789",
           gatewayToken: options.openClawGatewayToken,
           projectsRoot: options.projectsRoot || "/workspace/sajtagent-projects",
@@ -332,8 +471,12 @@ export async function startRuntimeServer(
           clientStateDir:
             options.openClawClientStateDir ||
             "/home/sprite/.config/sajtagent/openclaw-client",
-        }),
-      }
+        })
+  const effectiveOptions: RuntimeServerOptions = {
+    ...options,
+    runner: options.runner ?? gatewayRunner,
+    turnRunner: options.turnRunner ?? gatewayRunner,
+  }
   const server = createRuntimeServer(effectiveOptions)
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject)

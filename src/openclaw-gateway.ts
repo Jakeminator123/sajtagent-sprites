@@ -1,6 +1,9 @@
 import { GatewayClient } from "@openclaw/gateway-client"
+import type { EventFrame } from "@openclaw/gateway-protocol"
+import { GATEWAY_CLIENT_CAPS } from "@openclaw/gateway-protocol/client-info"
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version"
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { promisify } from "node:util"
 
@@ -11,6 +14,15 @@ import {
   type WorkerReportV1,
 } from "../contracts/builder-v1.ts"
 import type { OpenClawModelRouteV1 } from "./model-routing.ts"
+import { routeAgentTurnModelV1 } from "./model-routing.ts"
+import {
+  compileConversationOnlyOpenClawToolPolicyV1,
+  createOpenClawAgentNormalizerStateV1,
+  normalizeOpenClawGatewayEventV1,
+  type AgentEventDraftV1,
+  type AgentTurnRunnerV1,
+  type RuntimeAgentTurnIngressV1,
+} from "./agent-turn.ts"
 import { createRuntimeGatewayHostDepsV1 } from "./openclaw-device.ts"
 import {
   WorkspacePreparationError,
@@ -40,6 +52,10 @@ type AgentWaitResult = {
   error?: unknown
   stopReason?: string
   terminalReply?: unknown
+}
+
+type SessionResolveResult = {
+  ok?: boolean
 }
 
 export type RuntimeGatewayHealthV1 = {
@@ -184,14 +200,17 @@ export function compileSessionPermissionModeV1(
   return "read-only"
 }
 
-export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
+export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentTurnRunnerV1 {
   private readonly options: OpenClawGatewayRunnerOptions
 
   constructor(options: OpenClawGatewayRunnerOptions) {
     this.options = options
   }
 
-  private async withClient<T>(operation: (client: GatewayRequestClient) => Promise<T>): Promise<T> {
+  private async withClient<T>(
+    operation: (client: GatewayRequestClient) => Promise<T>,
+    onEvent?: (event: EventFrame) => void,
+  ): Promise<T> {
     let resolveReady!: () => void
     let rejectReady!: (reason?: unknown) => void
     const ready = new Promise<void>((resolve, reject) => {
@@ -209,6 +228,12 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
       mode: "backend",
       role: "operator",
       scopes: ["operator.admin"],
+      caps: onEvent
+        ? [
+            GATEWAY_CLIENT_CAPS.SESSION_SCOPED_EVENTS,
+            GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
+          ]
+        : undefined,
       hostDeps: createRuntimeGatewayHostDepsV1(this.options.clientStateDir),
       minProtocol: PROTOCOL_VERSION,
       maxProtocol: PROTOCOL_VERSION,
@@ -217,6 +242,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
         resolveReady()
       },
       onConnectError: (error) => rejectReady(error),
+      onEvent,
       onClose: (_code, reason) => {
         if (!connected) rejectReady(new Error(`Gateway closed before hello: ${reason}`))
       },
@@ -250,6 +276,175 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
         reason: error instanceof Error ? error.message : "OpenClaw Gateway unavailable",
       }
     }
+  }
+
+  async runTurn(
+    input: RuntimeAgentTurnIngressV1,
+    emit: (event: AgentEventDraftV1) => void,
+  ): Promise<void> {
+    const timeoutMs = Math.max(
+      1_000,
+      Math.min(15 * 60_000, Date.parse(input.policy.expiresAt) - Date.now()),
+    )
+    const route = routeAgentTurnModelV1(input.turn, input.policy)
+    const { provider, model } = splitModel(route)
+    const sessionDigest = createHash("sha256")
+      .update(`${input.session.projectId}\n${input.session.sessionId}`)
+      .digest("base64url")
+      .slice(0, 32)
+    const sessionKey = `agent:main:sajtagent-session-${sessionDigest}`
+    const normalizerState = createOpenClawAgentNormalizerStateV1()
+    let acceptedRunId: string | undefined
+    let terminalEmitted = false
+    let messageEventCount = 0
+    let eventFailure: Error | undefined
+    const pendingFrames: EventFrame[] = []
+
+    const emitOnce = (event: AgentEventDraftV1) => {
+      if (terminalEmitted) return
+      emit(event)
+      if (event.type === "message.delta") messageEventCount += 1
+      terminalEmitted = event.type === "turn.completed" || event.type === "turn.failed"
+    }
+    const consumeFrame = (frame: EventFrame) => {
+      if (!acceptedRunId || terminalEmitted) return
+      try {
+        for (const event of normalizeOpenClawGatewayEventV1(frame, {
+          runId: acceptedRunId,
+          turnId: input.turn.turnId,
+          capabilities: input.policy.capabilities,
+          state: normalizerState,
+        })) {
+          emitOnce(event)
+        }
+      } catch (error) {
+        eventFailure = error instanceof Error ? error : new Error("openclaw_event_normalization_failed")
+      }
+    }
+    const onEvent = (frame: EventFrame) => {
+      if (frame.event !== "agent" && frame.event !== "question.requested") return
+      if (!acceptedRunId) {
+        if (pendingFrames.length < 512) pendingFrames.push(frame)
+        return
+      }
+      consumeFrame(frame)
+    }
+
+    await this.withClient(async (client) => {
+      const resolved = await client.request<SessionResolveResult>("sessions.resolve", {
+        key: sessionKey,
+        agentId: "main",
+        includeGlobal: false,
+        allowMissing: true,
+      })
+      if (resolved.ok !== true) {
+        await client.request("sessions.create", {
+          key: sessionKey,
+          idempotencyKey: `session:${sessionDigest}`,
+          agentId: "main",
+          label: `Sajtagent session ${input.session.projectId}`,
+          category: "sajtagent-session",
+          permissionMode: "read-only",
+          toolOverrides: { webSearch: false },
+          visibility: "draft",
+        })
+      }
+      await client.request("sessions.patch", {
+        key: sessionKey,
+        agentId: "main",
+        model: route.model,
+        thinkingLevel: route.thinkingLevel,
+        reasoningLevel: route.reasoningVisibility,
+        permissionMode: "read-only",
+        ...compileConversationOnlyOpenClawToolPolicyV1(),
+        sendPolicy: "deny",
+        responseUsage: "tokens",
+      })
+      const accepted = await client.request<AgentAcceptance>("agent", {
+        message: input.turn.message,
+        agentId: "main",
+        provider,
+        model,
+        sessionKey,
+        thinking: route.thinkingLevel,
+        deliver: false,
+        timeout: Math.ceil(timeoutMs / 1_000),
+        promptMode: "minimal",
+        extraSystemPrompt: [
+          "Du är den kontinuerliga SiteAgenten i Sajtagent Builder.",
+          "Svara direkt i dialogen. Detta är inte ett dolt BuildJob.",
+          "Denna första privata ingress stöder endast conversation.respond: använd inga verktyg och gör inga ändringar.",
+          `Turens serverutfärdade klockslag: ${input.policy.issuedAt}.`,
+          `Projektbindning: ${input.session.projectId}. Basrevision: ${input.policy.baseRevisionId}.`,
+          `Serverägd budget: ${input.policy.maxModelTokens} modelltokens och ${input.policy.maxCostMicros} mikrodollar.`,
+          "Visa aldrig interna resonemangsblock.",
+        ].join("\n"),
+        inputProvenance: { kind: "external_user" },
+        sessionEffects: "visible",
+        disableMessageTool: true,
+        idempotencyKey: `turn:${input.turn.idempotencyKey}`,
+        label: `Sajtagent turn ${input.turn.turnId}`,
+      })
+      if (!accepted.runId) {
+        throw new Error("openclaw_run_not_accepted")
+      }
+      acceptedRunId = accepted.runId
+      for (const frame of pendingFrames.splice(0)) consumeFrame(frame)
+
+      const waited = await client.request<AgentWaitResult>(
+        "agent.wait",
+        { runId: accepted.runId, timeoutMs },
+        { timeoutMs: timeoutMs + 5_000 },
+      )
+      if (eventFailure) throw eventFailure
+      if (terminalEmitted) return
+      if (waited.status === "timeout" || waited.status === "timed_out") {
+        emitOnce({
+          type: "turn.failed",
+          payload: {
+            code: "openclaw_run_timeout",
+            message: "OpenClaw-körningen nådde sin turpolicydeadline.",
+            retryable: true,
+          },
+        })
+        return
+      }
+      if (waited.status === "cancelled") {
+        emitOnce({
+          type: "turn.failed",
+          payload: {
+            code: "openclaw_run_cancelled",
+            message: "OpenClaw-körningen avbröts.",
+            retryable: true,
+          },
+        })
+        return
+      }
+      if (waited.status !== "completed" && waited.status !== "ok") {
+        emitOnce({
+          type: "turn.failed",
+          payload: {
+            code: "openclaw_run_failed",
+            message: "OpenClaw-körningen misslyckades.",
+            retryable: true,
+          },
+        })
+        return
+      }
+      if (messageEventCount === 0) {
+        emitOnce({
+          type: "turn.failed",
+          payload: {
+            code: "openclaw_empty_answer",
+            message: "OpenClaw slutförde turen utan ett visningsbart svar.",
+            retryable: true,
+          },
+        })
+        return
+      }
+      emitOnce({ type: "agent.status", payload: { state: "idle" } })
+      emitOnce({ type: "turn.completed", payload: { outcome: "answered" } })
+    }, onEvent)
   }
 
   async run(job: BuildJobV1, route: OpenClawModelRouteV1): Promise<WorkerReportV1> {
