@@ -13,7 +13,9 @@
     "npm": "11.19.0"
   },
   "scripts": {
-    "check:contracts": "node scripts/verify-builder-contracts.mts && tsc -p tsconfig.contracts.json"
+    "check:contracts": "node scripts/verify-builder-contracts.mts && tsc -p tsconfig.contracts.json",
+    "check:runtime": "node scripts/verify-local-runtime.mts && tsc -p tsconfig.runtime.json",
+    "dev:runtime": "node src/server.ts"
   },
   "dependencies": {
     "zod": "^3.24.1"

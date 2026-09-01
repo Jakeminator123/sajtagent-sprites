@@ -2,6 +2,34 @@
 
 Status: accepted runtime baseline, 2026-09-01.
 
+## Local profile compiler
+
+The first runnable adapter is deliberately compile-only. It lets Agent Studio
+probe the runtime host ceiling and compile an `AgentProfileV1` into portable
+OpenClaw workspace files without creating a Sprite or claiming that OpenClaw
+is connected.
+
+```powershell
+npm ci
+npm run check:runtime
+npm run dev:runtime
+```
+
+The default listener is `http://127.0.0.1:4317`. `GET /health` and local
+`POST /v1/agent-profiles/compile` need no credential. `POST /v1/build-jobs`
+always needs an HMAC signing key and currently returns a typed,
+non-authoritative `openclaw_not_connected` worker failure. It must not return a
+candidate until a real Gateway run exists.
+
+Agent Studio development origins on ports 3000, 3001, and 3147 are allowed by
+default. Override them with a comma-separated `SITEAGENT_STUDIO_ORIGINS` value.
+Binding outside loopback requires a signing key of at least 32 characters.
+
+The compiler emits `SOUL.md`, `AGENTS.md`, `profiles/openclaw.yml`, and a
+structured host configuration. These are portable inputs, not proof that the
+host granted every requested capability. The effective policy is always the
+intersection of the profile request and the server-owned host ceiling.
+
 ## Official sources
 
 - [Sprites remote MCP server](https://docs.sprites.dev/integrations/remote-mcp/)

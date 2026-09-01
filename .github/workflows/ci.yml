@@ -25,3 +25,6 @@ jobs:
 
       - name: Check builder contracts
         run: npm run check:contracts
+
+      - name: Check local runtime adapter
+        run: npm run check:runtime
