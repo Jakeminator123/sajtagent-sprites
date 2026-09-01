@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import { createHash } from "node:crypto"
 import { pathToFileURL } from "node:url"
 
 import {
@@ -10,7 +11,15 @@ import {
 import {
   BuildJobV1Schema,
   WorkerReportV1Schema,
+  type BuildJobV1,
+  type WorkerReportV1,
 } from "../contracts/builder-v1.ts"
+import {
+  OpenClawGatewayBuildJobRunnerV1,
+  UNAVAILABLE_BUILD_JOB_RUNNER_V1,
+  type BuildJobRunnerV1,
+} from "./openclaw-gateway.ts"
+import { routeBuildJobModelV1 } from "./model-routing.ts"
 import {
   SIGNATURE_HEADERS_V1,
   verifyRuntimeSignatureV1,
@@ -18,6 +27,7 @@ import {
 
 const MAX_BODY_BYTES = 512 * 1024
 const NONCE_RETENTION_MS = 10 * 60_000
+const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60_000
 const DEFAULT_ALLOWED_ORIGINS = [
   "http://127.0.0.1:3000",
   "http://localhost:3000",
@@ -33,6 +43,11 @@ export type RuntimeServerOptions = {
   signingKey: string | null
   allowedOrigins: string[]
   ceiling: AgentHostCeilingV1
+  runner?: BuildJobRunnerV1
+  openClawGatewayUrl?: string
+  openClawGatewayToken?: string
+  projectsRoot?: string
+  workersRoot?: string
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -114,11 +129,48 @@ export function resolveRuntimeServerOptions(
     signingKey,
     allowedOrigins,
     ceiling: DEFAULT_LOCAL_AGENT_CEILING_V1,
+    openClawGatewayUrl: env.OPENCLAW_GATEWAY_URL?.trim() || "ws://127.0.0.1:18789",
+    openClawGatewayToken: env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined,
+    projectsRoot: env.SITEAGENT_PROJECTS_ROOT?.trim() || "/workspace/sajtagent-projects",
+    workersRoot: env.SITEAGENT_WORKERS_ROOT?.trim() || "/workspace/sajtagent-workers",
   }
 }
 
 export function createRuntimeServer(options: RuntimeServerOptions) {
   const usedNonces = new Map<string, number>()
+  const runner = options.runner ?? UNAVAILABLE_BUILD_JOB_RUNNER_V1
+  const jobRequests = new Map<
+    string,
+    { bodyDigest: string; expiresAt: number; report: Promise<WorkerReportV1> }
+  >()
+
+  function reportStatus(report: WorkerReportV1): number {
+    if (report.status === "candidate") return 200
+    if (report.status === "timed_out") return 504
+    if (report.status === "cancelled") return 409
+    const code = report.diagnostics[0]?.code
+    if (code === "stale_revision" || code === "idempotency_conflict") return 409
+    return 503
+  }
+
+  function idempotencyConflict(job: BuildJobV1): WorkerReportV1 {
+    return WorkerReportV1Schema.parse({
+      schemaVersion: 1,
+      status: "failed",
+      jobId: job.jobId,
+      sourceRunId: `local:${job.jobId}`,
+      baseRevisionId: job.baseRevisionId,
+      receipts: [],
+      diagnostics: [
+        {
+          code: "idempotency_conflict",
+          message: "Samma idempotencyKey har redan använts med ett annat BuildJobV1-innehåll.",
+          retryable: false,
+        },
+      ],
+      reportedAt: new Date().toISOString(),
+    })
+  }
 
   function requireSignature(
     request: IncomingMessage,
@@ -182,13 +234,16 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
     const url = new URL(request.url || "/", `http://${options.host}`)
     try {
       if (request.method === "GET" && url.pathname === "/health") {
+        const gatewayHealth = await runner.health()
         sendJson(
           response,
           200,
           {
             service: "sajtagent-sprites-runtime",
-            mode: "local-compile-only",
-            openClawConnected: false,
+            mode: gatewayHealth.connected ? "openclaw-gateway" : "fail-closed",
+            openClawConnected: gatewayHealth.connected,
+            openClawVersion: gatewayHealth.runtimeVersion,
+            openClawReason: gatewayHealth.reason,
             signedJobsEnabled: Boolean(options.signingKey),
           },
           corsHeaders,
@@ -225,24 +280,27 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
           return
         }
         const job = BuildJobV1Schema.parse(JSON.parse(body))
-        const report = WorkerReportV1Schema.parse({
-          schemaVersion: 1,
-          status: "failed",
-          jobId: job.jobId,
-          sourceRunId: `local:${job.jobId}`,
-          baseRevisionId: job.baseRevisionId,
-          receipts: [],
-          diagnostics: [
-            {
-              code: "openclaw_not_connected",
-              message:
-                "Profilkompilatorn är redo, men ingen OpenClaw Gateway är ansluten. Jobbet kan inte rapporteras som lyckat.",
-              retryable: true,
-            },
-          ],
-          reportedAt: new Date().toISOString(),
-        })
-        sendJson(response, 503, report, corsHeaders)
+        const now = Date.now()
+        for (const [key, value] of jobRequests) {
+          if (value.expiresAt <= now) jobRequests.delete(key)
+        }
+        const bodyDigest = createHash("sha256").update(JSON.stringify(job)).digest("hex")
+        const existing = jobRequests.get(job.idempotencyKey)
+        if (existing && existing.bodyDigest !== bodyDigest) {
+          const report = idempotencyConflict(job)
+          sendJson(response, 409, report, corsHeaders)
+          return
+        }
+        const reportPromise = existing?.report ?? runner.run(job, routeBuildJobModelV1(job))
+        if (!existing) {
+          jobRequests.set(job.idempotencyKey, {
+            bodyDigest,
+            expiresAt: now + IDEMPOTENCY_RETENTION_MS,
+            report: reportPromise,
+          })
+        }
+        const report = WorkerReportV1Schema.parse(await reportPromise)
+        sendJson(response, reportStatus(report), report, corsHeaders)
         return
       }
 
@@ -258,7 +316,18 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
 export async function startRuntimeServer(
   options: RuntimeServerOptions = resolveRuntimeServerOptions(),
 ) {
-  const server = createRuntimeServer(options)
+  const effectiveOptions: RuntimeServerOptions = options.runner
+    ? options
+    : {
+        ...options,
+        runner: new OpenClawGatewayBuildJobRunnerV1({
+          gatewayUrl: options.openClawGatewayUrl || "ws://127.0.0.1:18789",
+          gatewayToken: options.openClawGatewayToken,
+          projectsRoot: options.projectsRoot || "/workspace/sajtagent-projects",
+          workersRoot: options.workersRoot || "/workspace/sajtagent-workers",
+        }),
+      }
+  const server = createRuntimeServer(effectiveOptions)
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject)
     server.listen(options.port, options.host, () => resolve())
@@ -266,7 +335,7 @@ export async function startRuntimeServer(
   const address = server.address()
   const port = typeof address === "object" && address ? address.port : options.port
   console.log(`sajtagent-sprites-runtime listening on http://${options.host}:${port}`)
-  console.log("mode=local-compile-only openclawConnected=false")
+  console.log(`mode=openclaw-gateway gateway=${options.openClawGatewayUrl || "ws://127.0.0.1:18789"}`)
   return server
 }
 

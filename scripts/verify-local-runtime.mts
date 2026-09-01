@@ -12,6 +12,8 @@ import {
   createRuntimeServer,
   resolveRuntimeServerOptions,
 } from "../src/server.ts"
+import { routeBuildJobModelV1 } from "../src/model-routing.ts"
+import { compileSessionPermissionModeV1 } from "../src/openclaw-gateway.ts"
 import {
   SIGNATURE_HEADERS_V1,
   signRuntimeRequestV1,
@@ -119,6 +121,43 @@ try {
   }
   const body = JSON.stringify(job)
 
+  assert.deepEqual(
+    routeBuildJobModelV1(job as never),
+    {
+      schemaVersion: 1,
+      tier: "fast",
+      model: "openai/gpt-5.6-luna",
+      thinkingLevel: "off",
+      reasoningVisibility: "off",
+      reasonCode: "small_bounded_change",
+    },
+  )
+  assert.equal(compileSessionPermissionModeV1(job as never), "read-only")
+  const routineJob = structuredClone(job)
+  routineJob.executionPolicy.maxSteps = 30
+  routineJob.executionPolicy.maxToolCalls = 60
+  routineJob.executionPolicy.maxModelTokens = 60_000
+  routineJob.executionPolicy.capabilities = ["workspace.read", "workspace.write"]
+  assert.equal(routeBuildJobModelV1(routineJob as never).model, "openai/gpt-5.6-terra")
+  assert.equal(compileSessionPermissionModeV1(routineJob as never), "guarded")
+  const complexJob = structuredClone(routineJob)
+  complexJob.intent.context = { ...complexJob.intent.context, planMode: true }
+  complexJob.executionPolicy.capabilities = [
+    "workspace.read",
+    "workspace.write",
+    "command.execute",
+    "browser.inspect",
+    "preview.manage",
+  ]
+  assert.deepEqual(
+    {
+      model: routeBuildJobModelV1(complexJob as never).model,
+      thinking: routeBuildJobModelV1(complexJob as never).thinkingLevel,
+    },
+    { model: "openai/gpt-5.6-sol", thinking: "xhigh" },
+  )
+  assert.equal(compileSessionPermissionModeV1(complexJob as never), "workspace")
+
   const unsignedJob = await fetch(`${baseUrl}/v1/build-jobs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -155,7 +194,7 @@ try {
   })
   assert.equal(replayed.status, 409)
 
-  console.log("PASS local runtime: 12 assertions")
+  console.log("PASS local runtime: signed fail-closed flow and Luna/Terra/Sol routing")
 } finally {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))

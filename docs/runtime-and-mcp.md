@@ -2,12 +2,13 @@
 
 Status: accepted runtime baseline, 2026-09-01.
 
-## Local profile compiler
+## Runtime adapter and local profile compiler
 
-The first runnable adapter is deliberately compile-only. It lets Agent Studio
-probe the runtime host ceiling and compile an `AgentProfileV1` into portable
-OpenClaw workspace files without creating a Sprite or claiming that OpenClaw
-is connected.
+The runtime has two surfaces: a local profile compiler and a signed
+`BuildJobV1` adapter for an OpenClaw Gateway. The adapter creates one
+server-owned detached Git worktree per idempotent job, creates a private
+OpenClaw session rooted at that worktree, runs the selected model, and
+normalizes the result into a validated `WorkerReportV1`.
 
 ```powershell
 npm ci
@@ -17,13 +18,39 @@ npm run dev:runtime
 
 The default listener is `http://127.0.0.1:4317`. `GET /health` and local
 `POST /v1/agent-profiles/compile` need no credential. `POST /v1/build-jobs`
-always needs an HMAC signing key and currently returns a typed,
-non-authoritative `openclaw_not_connected` worker failure. It must not return a
-candidate until a real Gateway run exists.
+always needs `SITEAGENT_RUNTIME_SIGNING_KEY` and validates timestamp, nonce,
+signature, expiry, idempotency, workspace revision, and the frozen job schema.
+It returns fail-closed typed diagnostics when the Gateway or project checkout
+is unavailable. A worker candidate remains non-authoritative until
+`sajtagent-site` has verified and persisted it.
+
+The server-owned model router uses Luna with thinking off for small bounded
+changes, Terra with low or medium thinking for routine work, and Sol with high
+or xhigh thinking for complex planning or high-capability jobs. OpenClaw
+reasoning visibility remains off for every route: thinking controls model
+compute, while reasoning visibility controls whether reasoning blocks are
+shown.
+
+OpenClaw permission modes are compiled fail-closed from semantic capabilities:
+read-only jobs use `read-only`, edit-only jobs use `guarded`, and jobs that
+explicitly allow commands, checks, or package installation use `workspace`.
+Every session records the detached worktree as its canonical session root.
+The hard wall-clock deadline is enforced by the adapter. OpenClaw 2026.8 does
+not expose per-run hard counters for step, tool-call, token, or cost budgets;
+those limits are sent as policy constraints and must not be described as hard
+enforcement until upstream receipts can be stopped and counted in-flight.
+
+The verified development Sprite currently has neither Docker nor Podman.
+Therefore the live V1 uses the OpenClaw session-root boundary and a secret-free
+per-job worktree, but it must not be described as container-sandboxed. Enable a
+supported Docker, Podman, SSH, or OpenShell backend before treating arbitrary
+mutually untrusted customer code as strongly isolated.
 
 Agent Studio development origins on ports 3000, 3001, and 3147 are allowed by
 default. Override them with a comma-separated `SITEAGENT_STUDIO_ORIGINS` value.
 Binding outside loopback requires a signing key of at least 32 characters.
+The OpenClaw Gateway and this adapter stay on loopback; no browser calls either
+service directly.
 
 The compiler emits `SOUL.md`, `AGENTS.md`, `profiles/openclaw.yml`, and a
 structured host configuration. These are portable inputs, not proof that the
