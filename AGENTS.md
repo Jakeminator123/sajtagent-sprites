@@ -22,6 +22,37 @@
   worktree path. If several repositories were touched, report each one.
 - Never remove dirty, locked, unpushed, active-PR, or unique worktrees.
 
+## Runtime authority
+
+- Read `docs/runtime-and-mcp.md` and `contracts/builder-v1.ts` before
+  changing OpenClaw, Sprites, MCP, job policy, or worker behavior.
+- OpenClaw Gateway owns the upstream agent loop, session queue, run lifecycle,
+  sandbox, native tools, and upstream tool policy. Do not duplicate them.
+- This repository owns the Sajtagent agent profile, workspace, skills, plugins,
+  thin signed Gateway adapter, and Job Policy Compiler. It may normalize an
+  upstream run into `WorkerReportV1`, but it never mints authoritative product
+  success.
+- `sajtagent-site` owns tenant and project authorization, credits and mandate
+  decisions, idempotency, verification, persistence, canonical versions, and
+  the replayable `BuildEventV1` stream.
+- The hosted Sprites MCP in `.codex/config.toml` is an optional developer
+  control plane, not a product runtime dependency. Its destructive tools still
+  require explicit task scope.
+
+## Concurrent agent coordination
+
+- Before editing, inspect the branch and working-tree diff. If another agent is
+  active in the same branch, worktree, folder, or file scope, coordinate before
+  touching overlapping files.
+- Prefer direct agent messaging and keep updates to four short lines: task,
+  files or area, what and why, and the next potentially conflicting action.
+- If direct messaging is unavailable, use a secret-free temporary note at
+  `.agents/coordination/<agent-id>.md`; the directory is local and ignored.
+- Pause overlapping edits and agree on ownership, ordering, or a compatible
+  split. Ask Jakob when materially different options remain roughly 50/50.
+- Never overwrite, discard, stage, commit, or rewrite another agent's changes
+  without agreement. Recheck status and diff immediately before staging.
+
 ## Change workflow
 
 - Treat `NOTES.md` and imported architecture reports as proposals, not runtime

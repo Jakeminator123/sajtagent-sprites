@@ -1,0 +1,25 @@
+{
+  "name": "sajtagent-sprites",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.19.0",
+  "engines": {
+    "node": "24.x",
+    "npm": "11.x"
+  },
+  "volta": {
+    "node": "24.20.0",
+    "npm": "11.19.0"
+  },
+  "scripts": {
+    "check:contracts": "node scripts/verify-builder-contracts.mts && tsc -p tsconfig.contracts.json"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "5.7.3"
+  }
+}

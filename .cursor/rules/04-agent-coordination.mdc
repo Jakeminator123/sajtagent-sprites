@@ -1,0 +1,18 @@
+---
+description: Brief coordination when agents share a branch, worktree, or folder
+alwaysApply: true
+---
+
+# Concurrent agent coordination
+
+- Inspect the branch and working-tree diff before editing.
+- If another agent is active in the same branch, worktree, folder, or file
+  scope, coordinate before touching overlapping files.
+- Prefer direct agent messaging. Keep updates to at most four short lines:
+  task, files or area, what and why, and the next conflicting action.
+- If direct messaging is unavailable, use a secret-free temporary note at
+  `.agents/coordination/<agent-id>.md`. Remove or finish it when done.
+- Pause overlapping edits and agree on ownership, ordering, or a compatible
+  split. Ask Jakob when materially different options remain roughly 50/50.
+- Never overwrite, discard, stage, commit, or rewrite another agent's changes
+  without agreement. Recheck status and diff immediately before staging.
