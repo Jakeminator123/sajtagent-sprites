@@ -7,6 +7,7 @@ import {
   type WorkerReportV1,
 } from "../contracts/builder-v1.ts"
 import type { OpenClawModelRouteV1 } from "./model-routing.ts"
+import { createRuntimeGatewayHostDepsV1 } from "./openclaw-device.ts"
 import {
   WorkspacePreparationError,
   inspectBuildWorkspaceV1,
@@ -49,6 +50,7 @@ interface OpenClawGatewayRunnerOptions {
   gatewayToken?: string
   projectsRoot: string
   workersRoot: string
+  clientStateDir: string
   connectTimeoutMs?: number
 }
 
@@ -163,7 +165,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1 {
       mode: "backend",
       role: "operator",
       scopes: ["operator.admin"],
-      deviceIdentity: null,
+      hostDeps: createRuntimeGatewayHostDepsV1(this.options.clientStateDir),
       minProtocol: PROTOCOL_VERSION,
       maxProtocol: PROTOCOL_VERSION,
       onHelloOk: () => {

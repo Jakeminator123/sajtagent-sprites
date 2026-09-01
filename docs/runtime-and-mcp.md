@@ -24,6 +24,11 @@ It returns fail-closed typed diagnostics when the Gateway or project checkout
 is unavailable. A worker candidate remains non-authoritative until
 `sajtagent-site` has verified and persisted it.
 
+The adapter persists its own Ed25519 Gateway client identity beneath
+`SITEAGENT_OPENCLAW_CLIENT_STATE_DIR`. Pair that exact local client once with
+`openclaw devices list` and `openclaw devices approve`; subsequent connections
+reuse the device token without putting it in Git or the project workspace.
+
 The server-owned model router uses Luna with thinking off for small bounded
 changes, Terra with low or medium thinking for routine work, and Sol with high
 or xhigh thinking for complex planning or high-capability jobs. OpenClaw

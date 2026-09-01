@@ -48,6 +48,7 @@ export type RuntimeServerOptions = {
   openClawGatewayToken?: string
   projectsRoot?: string
   workersRoot?: string
+  openClawClientStateDir?: string
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -133,6 +134,9 @@ export function resolveRuntimeServerOptions(
     openClawGatewayToken: env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined,
     projectsRoot: env.SITEAGENT_PROJECTS_ROOT?.trim() || "/workspace/sajtagent-projects",
     workersRoot: env.SITEAGENT_WORKERS_ROOT?.trim() || "/workspace/sajtagent-workers",
+    openClawClientStateDir:
+      env.SITEAGENT_OPENCLAW_CLIENT_STATE_DIR?.trim() ||
+      "/home/sprite/.config/sajtagent/openclaw-client",
   }
 }
 
@@ -325,6 +329,9 @@ export async function startRuntimeServer(
           gatewayToken: options.openClawGatewayToken,
           projectsRoot: options.projectsRoot || "/workspace/sajtagent-projects",
           workersRoot: options.workersRoot || "/workspace/sajtagent-workers",
+          clientStateDir:
+            options.openClawClientStateDir ||
+            "/home/sprite/.config/sajtagent/openclaw-client",
         }),
       }
   const server = createRuntimeServer(effectiveOptions)
