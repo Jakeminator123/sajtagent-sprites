@@ -14,6 +14,11 @@ export const RUNTIME_AGENT_TURN_CAPABILITIES_V1 = [
   "conversation.respond",
 ] as const satisfies readonly AgentTurnCapabilityV1[]
 
+export const MAX_AGENT_TURN_EVENTS_V1 = 4_096
+export const MAX_AGENT_EVENT_SSE_BYTES_V1 = 32 * 1024
+export const MAX_AGENT_TURN_SSE_BYTES_V1 = 4 * 1024 * 1024
+export const AGENT_TURN_TERMINAL_RESERVE_BYTES_V1 = 64 * 1024
+
 export function compileConversationOnlyOpenClawToolPolicyV1() {
   return {
     inheritedToolPolicyVersion: 1 as const,

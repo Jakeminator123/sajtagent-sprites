@@ -28,6 +28,9 @@ import {
 import { materializeOpenClawProfileV1 } from "../src/materialize-profile.ts"
 import { parseGitStatusPathsV1 } from "../src/workspace.ts"
 import {
+  MAX_AGENT_EVENT_SSE_BYTES_V1,
+  MAX_AGENT_TURN_EVENTS_V1,
+  MAX_AGENT_TURN_SSE_BYTES_V1,
   compileConversationOnlyOpenClawToolPolicyV1,
   createOpenClawAgentNormalizerStateV1,
   normalizeOpenClawGatewayEventV1,
@@ -36,6 +39,9 @@ import {
 } from "../src/agent-turn.ts"
 
 const signingKey = "local-test-key-that-is-at-least-32-characters-long"
+assert.equal(MAX_AGENT_TURN_EVENTS_V1, 4_096)
+assert.equal(MAX_AGENT_EVENT_SSE_BYTES_V1, 32 * 1024)
+assert.equal(MAX_AGENT_TURN_SSE_BYTES_V1, 4 * 1024 * 1024)
 assert.deepEqual(compileConversationOnlyOpenClawToolPolicyV1(), {
   inheritedToolPolicyVersion: 1,
   inheritedToolAllow: [],

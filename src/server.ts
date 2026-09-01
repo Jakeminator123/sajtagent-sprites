@@ -21,6 +21,10 @@ import {
 } from "./openclaw-gateway.ts"
 import { routeBuildJobModelV1 } from "./model-routing.ts"
 import {
+  AGENT_TURN_TERMINAL_RESERVE_BYTES_V1,
+  MAX_AGENT_EVENT_SSE_BYTES_V1,
+  MAX_AGENT_TURN_EVENTS_V1,
+  MAX_AGENT_TURN_SSE_BYTES_V1,
   RUNTIME_AGENT_TURN_CAPABILITIES_V1,
   RuntimeAgentTurnIngressV1Schema,
   UNAVAILABLE_AGENT_TURN_RUNNER_V1,
@@ -383,8 +387,33 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
           ...corsHeaders,
         })
         response.flushHeaders()
+        let streamedEventCount = 0
+        let streamedBytes = 0
         const emitter = createAgentEventEmitterV1(input, (event) => {
-          response.write(formatAgentEventSseV1(event))
+          const frame = formatAgentEventSseV1(event)
+          const frameBytes = Buffer.byteLength(frame, "utf8")
+          const terminal = event.type === "turn.completed" || event.type === "turn.failed"
+          if (frameBytes > MAX_AGENT_EVENT_SSE_BYTES_V1) {
+            throw new Error("agent_event_sse_too_large")
+          }
+          if (
+            !terminal &&
+            (streamedEventCount >= MAX_AGENT_TURN_EVENTS_V1 - 1 ||
+              streamedBytes + frameBytes >
+                MAX_AGENT_TURN_SSE_BYTES_V1 - AGENT_TURN_TERMINAL_RESERVE_BYTES_V1)
+          ) {
+            throw new Error("agent_turn_sse_limit_reached")
+          }
+          if (
+            terminal &&
+            (streamedEventCount >= MAX_AGENT_TURN_EVENTS_V1 ||
+              streamedBytes + frameBytes > MAX_AGENT_TURN_SSE_BYTES_V1)
+          ) {
+            throw new Error("agent_turn_terminal_sse_limit_reached")
+          }
+          streamedEventCount += 1
+          streamedBytes += frameBytes
+          response.write(frame)
         })
         const acceptedAt = new Date().toISOString()
         emitter.emit({

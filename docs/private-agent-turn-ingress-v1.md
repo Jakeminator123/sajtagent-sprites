@@ -71,6 +71,12 @@ The first frame is always `turn.accepted`. Runtime starts at
 sequence and type. Site remains authoritative: it validates and persists the
 events and owns the session-global sequence.
 
+The SSE transport permits at most 4,096 events and 4 MiB of framed event data
+per turn, with at most 32 KiB per framed event. Runtime reserves 64 KiB and one
+event slot for a terminal failure, so exceeding a non-terminal limit can still
+close the stream with a valid `turn.failed`. The policy deadline limits the
+stream to at most 15 minutes.
+
 There is deliberately no Runtime GET/resume endpoint. Browser reconnect and
 `GET /sessions/{sessionId}/events?afterSequence=N` belong to Site because
 Runtime does not own or persist the product event history. A duplicate POST is
