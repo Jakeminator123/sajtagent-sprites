@@ -124,6 +124,24 @@ function sendJson(
   response.end(JSON.stringify(value))
 }
 
+function safeRuntimeErrorCodeV1(error: unknown): string {
+  if (!error || typeof error !== "object") return typeof error
+  const record = error as Record<string, unknown>
+  if (
+    typeof record.code === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(record.code)
+  ) {
+    return record.code
+  }
+  if (
+    error instanceof Error &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(error.message)
+  ) {
+    return error.message
+  }
+  return error instanceof Error ? error.name : "unknown"
+}
+
 async function readBody(
   request: IncomingMessage,
   maxBytes = MAX_BODY_BYTES,
@@ -814,7 +832,10 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
               },
             })
           }
-        } catch {
+        } catch (error) {
+          console.error("[runtime/agent-turn] failed", {
+            errorCode: safeRuntimeErrorCodeV1(error),
+          })
           if (!emitter.terminal) {
             emitter.emit({
               type: "turn.failed",

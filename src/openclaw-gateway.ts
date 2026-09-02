@@ -85,6 +85,10 @@ type ChatHistoryResult = {
   deltaCursor?: unknown
 }
 
+export type BuildRequestHistoryBaselineV1 =
+  | { kind: "cursor"; cursor: string }
+  | { kind: "empty" }
+
 export type RuntimeGatewayHealthV1 = {
   connected: boolean
   runtimeVersion?: string
@@ -178,6 +182,18 @@ export function findBuildRequestToolCallIdInHistoryV1(
   return `tool:${digest}`
 }
 
+export function resolveBuildRequestHistoryBaselineV1(
+  history: ChatHistoryResult,
+): BuildRequestHistoryBaselineV1 {
+  if (typeof history.deltaCursor === "string") {
+    return { kind: "cursor", cursor: history.deltaCursor }
+  }
+  if (Array.isArray(history.messages) && history.messages.length === 0) {
+    return { kind: "empty" }
+  }
+  throw new Error("openclaw_build_request_history_cursor_missing")
+}
+
 async function recoverBuildRequestToolCallIdFromHistoryV1(
   client: GatewayRequestClient,
   sessionKey: string,
@@ -207,6 +223,29 @@ async function recoverBuildRequestToolCallIdFromHistoryV1(
       throw new Error("openclaw_build_request_history_cursor_missing")
     }
     cursor = historyDelta.deltaCursor
+  }
+  return undefined
+}
+
+async function recoverBuildRequestToolCallIdFromFreshHistoryV1(
+  client: GatewayRequestClient,
+  sessionKey: string,
+): Promise<string | undefined> {
+  for (const delayMs of [0, 50, 150, 350, 750]) {
+    if (delayMs > 0) await delay(delayMs)
+    const history = await client.request<ChatHistoryResult>("chat.history", {
+      sessionKey,
+      agentId: "main",
+      limit: 50,
+      maxChars: 100_000,
+    })
+    if (!Array.isArray(history.messages)) {
+      throw new Error("openclaw_build_request_history_messages_invalid")
+    }
+    const transcriptToolCallId = findBuildRequestToolCallIdInHistoryV1(
+      history.messages,
+    )
+    if (transcriptToolCallId) return transcriptToolCallId
   }
   return undefined
 }
@@ -602,7 +641,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
         sendPolicy: "deny",
         responseUsage: "tokens",
       })
-      let buildRequestHistoryCursor: string | undefined
+      let buildRequestHistoryBaseline: BuildRequestHistoryBaselineV1 | undefined
       if (buildRequestEnabled) {
         const historyBaseline = await client.request<ChatHistoryResult>(
           "chat.history",
@@ -613,10 +652,9 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
             maxChars: 10_000,
           },
         )
-        if (typeof historyBaseline.deltaCursor !== "string") {
-          throw new Error("openclaw_build_request_history_cursor_missing")
-        }
-        buildRequestHistoryCursor = historyBaseline.deltaCursor
+        buildRequestHistoryBaseline = resolveBuildRequestHistoryBaselineV1(
+          historyBaseline,
+        )
       }
       const accepted = await client.request<AgentAcceptance>("agent", {
         message: input.turn.message,
@@ -719,13 +757,17 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
         })
         return { outcome: "terminal" }
       }
-      if (buildRequestEnabled && buildRequestHistoryCursor) {
-        const transcriptToolCallId =
-          await recoverBuildRequestToolCallIdFromHistoryV1(
-            client,
-            sessionKey,
-            buildRequestHistoryCursor,
-          )
+      if (buildRequestEnabled && buildRequestHistoryBaseline) {
+        const transcriptToolCallId = buildRequestHistoryBaseline.kind === "cursor"
+          ? await recoverBuildRequestToolCallIdFromHistoryV1(
+              client,
+              sessionKey,
+              buildRequestHistoryBaseline.cursor,
+            )
+          : await recoverBuildRequestToolCallIdFromFreshHistoryV1(
+              client,
+              sessionKey,
+            )
         if (transcriptToolCallId) {
           emitOnce({
             type: "tool.started",

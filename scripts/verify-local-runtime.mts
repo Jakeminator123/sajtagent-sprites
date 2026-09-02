@@ -38,6 +38,7 @@ import {
   deriveAgentTurnSessionLabelV1,
   deriveAgentTurnSessionKeyV1,
   findBuildRequestToolCallIdInHistoryV1,
+  resolveBuildRequestHistoryBaselineV1,
   hasRegisteredBuildRequestToolV1,
   OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
   type BuildJobRunnerV1,
@@ -854,6 +855,23 @@ try {
       ],
     },
   ]), /openclaw_duplicate_build_request/)
+  assert.deepEqual(
+    resolveBuildRequestHistoryBaselineV1({ messages: [] }),
+    { kind: "empty" },
+  )
+  assert.deepEqual(
+    resolveBuildRequestHistoryBaselineV1({
+      messages: [],
+      deltaCursor: "cursor:fresh-session",
+    }),
+    { kind: "cursor", cursor: "cursor:fresh-session" },
+  )
+  assert.throws(
+    () => resolveBuildRequestHistoryBaselineV1({
+      messages: [{ role: "assistant", content: [] }],
+    }),
+    /openclaw_build_request_history_cursor_missing/,
+  )
 
   const createdAt = new Date()
   const expiresAt = new Date(createdAt.getTime() + 10 * 60_000)
