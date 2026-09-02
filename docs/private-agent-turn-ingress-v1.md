@@ -109,7 +109,9 @@ bound project ID and high-entropy Site session ID, adopts that exact existing
 OpenClaw session on later turns, and creates it only when missing. The
 subagent scope is required because OpenClaw restricts per-session inherited
 tool allow/deny policy to subagent and ACP sessions. Neither the browser nor
-Site receives that key. It advertises
+Site receives that key. The OpenClaw label uses the same digest instead of the
+project ID, so a legacy top-level session cannot block the private session by
+reusing its label. Runtime advertises
 OpenClaw's `session-scoped-events` and `tool-events` client capabilities and
 normalizes only documented Gateway families:
 
