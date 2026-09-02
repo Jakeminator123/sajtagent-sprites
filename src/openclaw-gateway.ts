@@ -149,7 +149,8 @@ export function findBuildRequestToolCallIdInHistoryV1(
   if (!Array.isArray(messages)) return undefined
   const rawToolCallIds: string[] = []
   for (const messageValue of messages) {
-    const message = objectRecord(messageValue)
+    const envelope = objectRecord(messageValue)
+    const message = objectRecord(envelope?.message) ?? envelope
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue
     for (const partValue of message.content) {
       const part = objectRecord(partValue)
