@@ -22,7 +22,7 @@ headers and canonical signature bytes as the other private Runtime routes:
     "jobId": "job:...",
     "baseRevisionId": "revision:...",
     "sourceRunId": "openclaw:...",
-    "candidateRevisionId": "candidate:...",
+    "candidateRevisionId": "revision:sha256:<64 lowercase hex>",
     "reportedAt": "2026-09-01T12:00:00.000Z"
   },
   "artifact": {

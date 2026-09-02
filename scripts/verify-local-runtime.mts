@@ -1,8 +1,13 @@
 import { strict as assert } from "node:assert"
 import { createHash, randomUUID } from "node:crypto"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import {
+  SessionsCreateParamsSchema,
+  SessionsPatchParamsSchema,
+} from "@openclaw/gateway-protocol"
+import { Value } from "typebox/value"
 
 import {
   DEFAULT_AGENT_PROFILE_V1,
@@ -23,7 +28,7 @@ import {
   MAX_PREVIEW_ARTIFACT_BYTES_V1,
   validateArtifactReadResponseV1,
 } from "../contracts/artifact-read-v1.ts"
-import { WorkerReportV1Schema } from "../contracts/builder-v1.ts"
+import { BuildJobV1Schema, WorkerReportV1Schema } from "../contracts/builder-v1.ts"
 import {
   createRuntimeServer,
   resolveRuntimeServerOptions,
@@ -34,6 +39,8 @@ import {
 } from "../src/model-routing.ts"
 import {
   compileSessionPermissionModeV1,
+  compileBuildWorkspaceToolPolicyV1,
+  createBuildWorkspaceSessionParamsV1,
   deriveAgentTurnSessionCreateIdempotencyKeyV1,
   deriveAgentTurnSessionLabelV1,
   deriveAgentTurnSessionKeyV1,
@@ -41,6 +48,7 @@ import {
   resolveBuildRequestHistoryBaselineV1,
   hasRegisteredBuildRequestToolV1,
   OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+  patchBuildWorkspaceSessionParamsV1,
   type BuildJobRunnerV1,
 } from "../src/openclaw-gateway.ts"
 import {
@@ -48,7 +56,13 @@ import {
   signRuntimeRequestV1,
 } from "../src/signing.ts"
 import { materializeOpenClawProfileV1 } from "../src/materialize-profile.ts"
-import { parseGitStatusPathsV1 } from "../src/workspace.ts"
+import {
+  candidateRevisionIdV1,
+  inspectBuildWorkspaceV1,
+  parseGitStatusPathsV1,
+  prepareBuildWorkspaceV1,
+  recordBuildWorkspaceCandidateV1,
+} from "../src/workspace.ts"
 import {
   MAX_AGENT_EVENT_SSE_BYTES_V1,
   MAX_AGENT_TURN_EVENTS_V1,
@@ -90,6 +104,35 @@ assert.deepEqual(compileBuildRequestOpenClawToolPolicyV1(), {
   inheritedToolAllow: ["siteagent_build_request", "build.request"],
   inheritedToolDeny: [],
 })
+assert.deepEqual(compileBuildWorkspaceToolPolicyV1(), {
+  inheritedToolPolicyVersion: 1,
+  inheritedToolDeny: ["exec", "process"],
+})
+const buildSessionCreateParams = createBuildWorkspaceSessionParamsV1({
+  sessionKey: "agent:main:sajtagent-build-protocol-test",
+  idempotencyKey: "session:build-protocol-test",
+  label: "Sajtagent build protocol test",
+  model: "openai/gpt-5.6-terra",
+  thinkingLevel: "medium",
+  permissionMode: "guarded",
+  webSearch: false,
+  cwd: process.cwd(),
+})
+assert.equal(Value.Check(SessionsCreateParamsSchema, buildSessionCreateParams), true)
+assert.equal(
+  buildSessionCreateParams.parentSessionKey,
+  OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+)
+assert.equal("inheritedToolDeny" in buildSessionCreateParams, false)
+const buildSessionPatchParams = patchBuildWorkspaceSessionParamsV1({
+  sessionKey: buildSessionCreateParams.key,
+  model: "openai/gpt-5.6-terra",
+  thinkingLevel: "medium",
+  reasoningLevel: "off",
+  permissionMode: "guarded",
+})
+assert.equal(Value.Check(SessionsPatchParamsSchema, buildSessionPatchParams), true)
+assert.deepEqual(buildSessionPatchParams.inheritedToolDeny, ["exec", "process"])
 assert.deepEqual(
   compileAgentTurnOpenClawToolPolicyV1([
     "conversation.respond",
@@ -987,6 +1030,155 @@ try {
   await rm(activationWorkspace, { recursive: true, force: true })
 }
 
+const revisionBridgeRoot = await mkdtemp(join(tmpdir(), "siteagent-revision-bridge-"))
+try {
+  const projectsRoot = join(revisionBridgeRoot, "projects")
+  const bridgeWorkersRoot = join(revisionBridgeRoot, "workers")
+  const createdAt = new Date()
+  const initialJob = BuildJobV1Schema.parse({
+    schemaVersion: 1,
+    jobId: "job:revision-bridge-initial",
+    tenantId: "tenant:revision-bridge",
+    projectId: "project:revision-bridge",
+    baseRevisionId: "revision:initial:revision-bridge",
+    idempotencyKey: "idempotency:revision-bridge-initial",
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + 10 * 60_000).toISOString(),
+    intent: {
+      schemaVersion: 1,
+      intentType: "site.create",
+      message: "Skapa den första statiska sajten",
+      context: {},
+    },
+    executionPolicy: {
+      deadlineAt: new Date(createdAt.getTime() + 5 * 60_000).toISOString(),
+      maxSteps: 20,
+      maxToolCalls: 40,
+      maxModelTokens: 20_000,
+      maxCostMicros: 100_000,
+      capabilities: ["workspace.read", "workspace.write", "preview.manage"],
+      network: { mode: "deny-all" },
+      packages: { mode: "deny" },
+    },
+  })
+  const digestBase = "a".repeat(40)
+  const digestTree = "b".repeat(40)
+  assert.notEqual(
+    candidateRevisionIdV1(
+      { tenantId: initialJob.tenantId, projectId: initialJob.projectId },
+      digestBase,
+      digestTree,
+    ),
+    candidateRevisionIdV1(
+      { tenantId: initialJob.tenantId, projectId: "project:other" },
+      digestBase,
+      digestTree,
+    ),
+  )
+  const initialWorkspace = await prepareBuildWorkspaceV1(initialJob, {
+    projectsRoot,
+    workersRoot: bridgeWorkersRoot,
+  })
+  assert.notEqual(initialWorkspace.baseCommit, initialJob.baseRevisionId)
+  assert.match(
+    await readFile(join(initialWorkspace.workerDir, "index.html"), "utf8"),
+    /Din nya sajt/,
+  )
+  await assert.rejects(readFile(join(initialWorkspace.workerDir, ".git")))
+  await writeFile(
+    join(initialWorkspace.workerDir, ".gitmodules"),
+    "[submodule \"unsafe\"]\n\tpath = unsafe\n\turl = https://example.invalid/unsafe.git\n",
+  )
+  await assert.rejects(
+    inspectBuildWorkspaceV1(initialWorkspace),
+    /förbjuden workspace-sökväg/,
+  )
+  await rm(join(initialWorkspace.workerDir, ".gitmodules"))
+
+  const outsideWorkspace = join(revisionBridgeRoot, "outside-workspace")
+  await mkdir(outsideWorkspace)
+  await writeFile(
+    join(outsideWorkspace, "outside.html"),
+    "<!doctype html><html><body>must not be captured</body></html>",
+  )
+  const linkedDirectory = join(initialWorkspace.workerDir, "linked-directory")
+  await symlink(
+    outsideWorkspace,
+    linkedDirectory,
+    process.platform === "win32" ? "junction" : "dir",
+  )
+  await assert.rejects(
+    inspectBuildWorkspaceV1(initialWorkspace),
+    /symlink eller annan otillåten filtyp/,
+  )
+  await rm(linkedDirectory)
+
+  const firstCandidateHtml =
+    "<!doctype html><html><body><h1>Första accepterade bygget</h1></body></html>"
+  await writeFile(join(initialWorkspace.workerDir, "index.html"), firstCandidateHtml)
+  const packageJsonPath = join(initialWorkspace.workerDir, "package.json")
+  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
+    scripts: Record<string, string>
+  }
+  packageJson.scripts.check =
+    "node -e \"require('node:fs').writeFileSync('runtime-check-marker','unsafe')\""
+  await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`)
+  const inspected = await inspectBuildWorkspaceV1(initialWorkspace)
+  assert.deepEqual(inspected.changedPaths, ["index.html", "package.json"])
+  const firstProjection = await recordBuildWorkspaceCandidateV1(
+    initialWorkspace,
+    { tenantId: initialJob.tenantId, projectId: initialJob.projectId },
+  )
+  assert.match(firstProjection.candidateRevisionId, /^revision:sha256:[a-f0-9]{64}$/u)
+  assert.deepEqual(firstProjection.changedPaths, ["index.html", "package.json"])
+  assert.equal(firstProjection.preview?.path, "index.html")
+  assert.match(firstProjection.check.snapshotSha256, /^[a-f0-9]{64}$/u)
+  await assert.rejects(
+    readFile(join(initialWorkspace.workerDir, "runtime-check-marker")),
+  )
+
+  const secondJob = BuildJobV1Schema.parse({
+    ...initialJob,
+    jobId: "job:revision-bridge-second",
+    baseRevisionId: firstProjection.candidateRevisionId,
+    idempotencyKey: "idempotency:revision-bridge-second",
+    intent: {
+      ...initialJob.intent,
+      intentType: "site.change",
+      message: "Fortsätt från det första accepterade bygget",
+    },
+  })
+  const secondWorkspace = await prepareBuildWorkspaceV1(secondJob, {
+    projectsRoot,
+    workersRoot: bridgeWorkersRoot,
+  })
+  assert.equal(secondWorkspace.baseCommit, firstProjection.candidateCommit)
+  assert.equal(
+    await readFile(join(secondWorkspace.workerDir, "index.html"), "utf8"),
+    firstCandidateHtml,
+  )
+  assert.notEqual(secondWorkspace.workerDir, initialWorkspace.workerDir)
+
+  const missingProjectJob = BuildJobV1Schema.parse({
+    ...secondJob,
+    jobId: "job:revision-bridge-missing",
+    projectId: "project:revision-bridge-missing",
+    idempotencyKey: "idempotency:revision-bridge-missing",
+  })
+  await assert.rejects(
+    prepareBuildWorkspaceV1(missingProjectJob, {
+      projectsRoot,
+      workersRoot: bridgeWorkersRoot,
+    }),
+    /serverägda Git-checkout finns inte/,
+  )
+  console.log(
+    "PASS revision bridge: signed site.create bootstrap and accepted candidate base",
+  )
+} finally {
+  await rm(revisionBridgeRoot, { recursive: true, force: true })
+}
+
 const artifactTestRoot = await mkdtemp(join(tmpdir(), "siteagent-artifact-read-"))
 const workersRoot = join(artifactTestRoot, "workers")
 const workspaceId = "a".repeat(32)
@@ -1062,7 +1254,7 @@ const artifactRunner: BuildJobRunnerV1 = {
       jobId: job.jobId,
       sourceRunId,
       baseRevisionId: job.baseRevisionId,
-      candidateRevisionId: "candidate:artifact-read-test",
+      candidateRevisionId: `revision:sha256:${"1".repeat(64)}`,
       changedPaths: ["index.html"],
       artifacts: [
         {
