@@ -198,6 +198,14 @@ export function deriveAgentTurnSessionKeyV1(
   return `agent:main:subagent:sajtagent-session-${sessionDigest}`
 }
 
+export function deriveAgentTurnSessionLabelV1(
+  projectId: string,
+  sessionId: string,
+): string {
+  const sessionKey = deriveAgentTurnSessionKeyV1(projectId, sessionId)
+  return `Sajtagent session ${sessionKey.slice(-32)}`
+}
+
 function buildPrompt(job: BuildJobV1, route: OpenClawModelRouteV1): string {
   const policy = job.executionPolicy
   return [
@@ -456,7 +464,10 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           key: sessionKey,
           idempotencyKey: `session:${sessionDigest}`,
           agentId: "main",
-          label: `Sajtagent session ${input.session.projectId}`,
+          label: deriveAgentTurnSessionLabelV1(
+            input.session.projectId,
+            input.session.sessionId,
+          ),
           category: "sajtagent-session",
           permissionMode: "read-only",
           toolOverrides: { webSearch: false },
