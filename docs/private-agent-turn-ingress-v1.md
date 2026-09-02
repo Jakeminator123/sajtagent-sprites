@@ -54,6 +54,9 @@ Conversation-only turns receive an explicit inherited wildcard deny
 (`deny: ["*"]`). Build-capable turns receive an exact allowlist containing
 only `siteagent_build_request` and its `build.request` alias. Both modes remain
 `read-only`; no file, shell, check or browser tool is granted.
+Because Site has already classified and signed the one allowed mutation intent,
+the build-capable agent must call the handoff tool exactly once. A textual
+handoff is not accepted as success.
 
 ## Response stream
 
@@ -108,8 +111,8 @@ The runtime derives a private V2 subagent-scoped session key from SHA-256 of
 the bound project ID and high-entropy Site session ID, adopts that exact
 existing OpenClaw session on later turns, and creates it only when missing.
 The child is linked at spawn depth one to a private, read-only Runtime
-controller session. OpenClaw requires both that parent lineage and the
-subagent scope before it applies inherited per-session tool allow/deny policy.
+controller session so the lineage remains explicit. The subagent scope is what
+allows OpenClaw to apply inherited per-session tool allow/deny policy.
 Neither the browser nor Site receives either key. The OpenClaw label uses the
 same digest instead of the project ID, and the V2 namespace prevents legacy
 root or unlinked test sessions and their creation-idempotency receipts from
