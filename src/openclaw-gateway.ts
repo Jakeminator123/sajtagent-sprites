@@ -5,6 +5,7 @@ import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version"
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
 
 import {
@@ -174,6 +175,39 @@ export function findBuildRequestToolCallIdInHistoryV1(
     .digest("base64url")
     .slice(0, 24)
   return `tool:${digest}`
+}
+
+async function recoverBuildRequestToolCallIdFromHistoryV1(
+  client: GatewayRequestClient,
+  sessionKey: string,
+  initialCursor: string,
+): Promise<string | undefined> {
+  let cursor = initialCursor
+  for (const delayMs of [0, 50, 150, 350, 750]) {
+    if (delayMs > 0) await delay(delayMs)
+    const historyDelta = await client.request<ChatHistoryResult>(
+      "chat.history",
+      {
+        sessionKey,
+        agentId: "main",
+        cursor,
+        limit: 50,
+        maxChars: 100_000,
+      },
+    )
+    if (historyDelta.kind === "reset") {
+      throw new Error("openclaw_build_request_history_cursor_reset")
+    }
+    const transcriptToolCallId = findBuildRequestToolCallIdInHistoryV1(
+      historyDelta.messages,
+    )
+    if (transcriptToolCallId) return transcriptToolCallId
+    if (typeof historyDelta.deltaCursor !== "string") {
+      throw new Error("openclaw_build_request_history_cursor_missing")
+    }
+    cursor = historyDelta.deltaCursor
+  }
+  return undefined
 }
 
 async function probeBuildRequestToolV1(
@@ -685,22 +719,12 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
         return { outcome: "terminal" }
       }
       if (buildRequestEnabled && buildRequestHistoryCursor) {
-        const historyDelta = await client.request<ChatHistoryResult>(
-          "chat.history",
-          {
+        const transcriptToolCallId =
+          await recoverBuildRequestToolCallIdFromHistoryV1(
+            client,
             sessionKey,
-            agentId: "main",
-            cursor: buildRequestHistoryCursor,
-            limit: 50,
-            maxChars: 100_000,
-          },
-        )
-        if (historyDelta.kind === "reset") {
-          throw new Error("openclaw_build_request_history_cursor_reset")
-        }
-        const transcriptToolCallId = findBuildRequestToolCallIdInHistoryV1(
-          historyDelta.messages,
-        )
+            buildRequestHistoryCursor,
+          )
         if (transcriptToolCallId) {
           emitOnce({
             type: "tool.started",
