@@ -537,7 +537,9 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           ...(buildRequestEnabled
             ? [
                 "Du får inte läsa, skriva, köra kommandon, kontroller, shell eller browser i denna tur.",
-                "Det enda tillåtna verktyget är ett enda siteagent_build_request (alias build.request), och endast när användaren faktiskt ber om en sajtändring.",
+                "Site har redan klassificerat och signerat denna tur som en uttrycklig sajtändring.",
+                "Du MÅSTE anropa siteagent_build_request exakt en gång som ditt första och enda svar.",
+                "Skriv ingen text före, efter eller i stället för verktygsanropet.",
                 `Den enda servergodkända mutationsintentionen är ${input.policy.allowedMutationIntents[0]}.`,
                 "Verktygsanropet är bara en överlämning till Site. Påstå aldrig att bygget, previewn eller produkten är klar.",
               ]
