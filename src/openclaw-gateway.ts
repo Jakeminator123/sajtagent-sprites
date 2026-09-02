@@ -206,6 +206,14 @@ export function deriveAgentTurnSessionLabelV1(
   return `Sajtagent session v2 ${sessionKey.slice(-32)}`
 }
 
+export function deriveAgentTurnSessionCreateIdempotencyKeyV1(
+  projectId: string,
+  sessionId: string,
+): string {
+  const sessionKey = deriveAgentTurnSessionKeyV1(projectId, sessionId)
+  return `session:v2:${sessionKey.slice(-32)}`
+}
+
 export const OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1 =
   "agent:main:sajtagent-controller-v1"
 
@@ -392,7 +400,6 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       input.session.projectId,
       input.session.sessionId,
     )
-    const sessionDigest = sessionKey.slice(-32)
     const buildRequestEnabled = input.policy.capabilities.includes("build.request")
     const normalizerState = createOpenClawAgentNormalizerStateV1()
     let acceptedRunId: string | undefined
@@ -486,7 +493,10 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       if (resolved.ok !== true) {
         await client.request("sessions.create", {
           key: sessionKey,
-          idempotencyKey: `session:${sessionDigest}`,
+          idempotencyKey: deriveAgentTurnSessionCreateIdempotencyKeyV1(
+            input.session.projectId,
+            input.session.sessionId,
+          ),
           agentId: "main",
           label: deriveAgentTurnSessionLabelV1(
             input.session.projectId,

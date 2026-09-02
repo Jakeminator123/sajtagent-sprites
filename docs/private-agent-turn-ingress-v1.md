@@ -112,7 +112,8 @@ controller session. OpenClaw requires both that parent lineage and the
 subagent scope before it applies inherited per-session tool allow/deny policy.
 Neither the browser nor Site receives either key. The OpenClaw label uses the
 same digest instead of the project ID, and the V2 namespace prevents legacy
-root or unlinked test sessions from being adopted. Runtime advertises
+root or unlinked test sessions and their creation-idempotency receipts from
+being adopted. Runtime advertises
 OpenClaw's `session-scoped-events` and `tool-events` client capabilities and
 normalizes only documented Gateway families:
 
