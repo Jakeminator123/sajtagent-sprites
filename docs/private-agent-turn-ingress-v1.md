@@ -104,14 +104,15 @@ therefore told to use Site resume rather than pretending Runtime can replay it.
 
 ## OpenClaw mapping
 
-The runtime derives a private subagent-scoped session key from SHA-256 of the
-bound project ID and high-entropy Site session ID, adopts that exact existing
-OpenClaw session on later turns, and creates it only when missing. The
-subagent scope is required because OpenClaw restricts per-session inherited
-tool allow/deny policy to subagent and ACP sessions. Neither the browser nor
-Site receives that key. The OpenClaw label uses the same digest instead of the
-project ID, so a legacy top-level session cannot block the private session by
-reusing its label. Runtime advertises
+The runtime derives a private V2 subagent-scoped session key from SHA-256 of
+the bound project ID and high-entropy Site session ID, adopts that exact
+existing OpenClaw session on later turns, and creates it only when missing.
+The child is linked at spawn depth one to a private, read-only Runtime
+controller session. OpenClaw requires both that parent lineage and the
+subagent scope before it applies inherited per-session tool allow/deny policy.
+Neither the browser nor Site receives either key. The OpenClaw label uses the
+same digest instead of the project ID, and the V2 namespace prevents legacy
+root or unlinked test sessions from being adopted. Runtime advertises
 OpenClaw's `session-scoped-events` and `tool-events` client capabilities and
 normalizes only documented Gateway families:
 

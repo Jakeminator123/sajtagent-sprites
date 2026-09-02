@@ -37,6 +37,7 @@ import {
   deriveAgentTurnSessionLabelV1,
   deriveAgentTurnSessionKeyV1,
   hasRegisteredBuildRequestToolV1,
+  OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
   type BuildJobRunnerV1,
 } from "../src/openclaw-gateway.ts"
 import {
@@ -141,7 +142,7 @@ const privateAgentTurnSessionKey = deriveAgentTurnSessionKeyV1(
 )
 assert.match(
   privateAgentTurnSessionKey,
-  /^agent:main:subagent:sajtagent-session-[A-Za-z0-9_-]{32}$/,
+  /^agent:main:subagent:sajtagent-session-v2-[A-Za-z0-9_-]{32}$/,
 )
 assert.doesNotMatch(privateAgentTurnSessionKey, /project:test|abcdefghijkl/)
 const privateAgentTurnSessionLabel = deriveAgentTurnSessionLabelV1(
@@ -150,9 +151,13 @@ const privateAgentTurnSessionLabel = deriveAgentTurnSessionLabelV1(
 )
 assert.match(
   privateAgentTurnSessionLabel,
-  /^Sajtagent session [A-Za-z0-9_-]{32}$/,
+  /^Sajtagent session v2 [A-Za-z0-9_-]{32}$/,
 )
 assert.doesNotMatch(privateAgentTurnSessionLabel, /project:test|abcdefghijkl/)
+assert.equal(
+  OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+  "agent:main:sajtagent-controller-v1",
+)
 let fakeBuildRequestToolRegistered = true
 const fakeTurnRunner = {
   async health() {
