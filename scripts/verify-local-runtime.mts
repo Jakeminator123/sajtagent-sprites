@@ -825,12 +825,15 @@ try {
   const transcriptBuildRequestToolCallId =
     findBuildRequestToolCallIdInHistoryV1([
       {
-        role: "assistant",
-        content: [{
-          type: "toolCall",
-          name: "siteagent_build_request",
-          id: "transcript-build-call",
-        }],
+        sessionKey: "agent:main:subagent:test",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            name: "siteagent_build_request",
+            id: "transcript-build-call",
+          }],
+        },
       },
       {
         role: "toolResult",

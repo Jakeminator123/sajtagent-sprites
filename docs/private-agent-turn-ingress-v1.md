@@ -88,8 +88,8 @@ tool.started { capability: "build.request", toolCallId, safeLabel }
 Runtime best-effort aborts the upstream OpenClaw run when that live frame is
 available. OpenClaw 2026.8 may persist a plugin tool call without forwarding
 its live tool frame to a backend client; Runtime then briefly reconciles only
-the cursor-bounded history delta for the accepted turn and accepts exactly one
-matching tool call. The bounded retry covers the small delay between
+the cursor-bounded `session.message` history projection for the accepted turn
+and accepts exactly one matching tool call. The bounded retry covers the small delay between
 `agent.wait` and transcript persistence. Runtime does not mint a BuildJob, emit `build.started` or
 `tool.completed`, produce a preview, or claim product success. Site derives
 the authorized intent from the singleton `allowedMutationIntent` plus the
