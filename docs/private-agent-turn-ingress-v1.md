@@ -104,9 +104,12 @@ therefore told to use Site resume rather than pretending Runtime can replay it.
 
 ## OpenClaw mapping
 
-The runtime derives a private session key from SHA-256 of the bound project ID
-and high-entropy Site session ID, adopts that exact existing OpenClaw session
-on later turns, and creates it only when missing. Neither the browser nor Site receives that key. It advertises
+The runtime derives a private subagent-scoped session key from SHA-256 of the
+bound project ID and high-entropy Site session ID, adopts that exact existing
+OpenClaw session on later turns, and creates it only when missing. The
+subagent scope is required because OpenClaw restricts per-session inherited
+tool allow/deny policy to subagent and ACP sessions. Neither the browser nor
+Site receives that key. It advertises
 OpenClaw's `session-scoped-events` and `tool-events` client capabilities and
 normalizes only documented Gateway families:
 

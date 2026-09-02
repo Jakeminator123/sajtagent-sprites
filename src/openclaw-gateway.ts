@@ -187,6 +187,17 @@ function splitModel(route: OpenClawModelRouteV1): { provider: string; model: str
   return { provider, model: rest.join("/") }
 }
 
+export function deriveAgentTurnSessionKeyV1(
+  projectId: string,
+  sessionId: string,
+): string {
+  const sessionDigest = createHash("sha256")
+    .update(`${projectId}\n${sessionId}`)
+    .digest("base64url")
+    .slice(0, 32)
+  return `agent:main:subagent:sajtagent-session-${sessionDigest}`
+}
+
 function buildPrompt(job: BuildJobV1, route: OpenClawModelRouteV1): string {
   const policy = job.executionPolicy
   return [
@@ -366,11 +377,11 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
     )
     const route = routeAgentTurnModelV1(input.turn, input.policy)
     const { provider, model } = splitModel(route)
-    const sessionDigest = createHash("sha256")
-      .update(`${input.session.projectId}\n${input.session.sessionId}`)
-      .digest("base64url")
-      .slice(0, 32)
-    const sessionKey = `agent:main:sajtagent-session-${sessionDigest}`
+    const sessionKey = deriveAgentTurnSessionKeyV1(
+      input.session.projectId,
+      input.session.sessionId,
+    )
+    const sessionDigest = sessionKey.slice(-32)
     const buildRequestEnabled = input.policy.capabilities.includes("build.request")
     const normalizerState = createOpenClawAgentNormalizerStateV1()
     let acceptedRunId: string | undefined
