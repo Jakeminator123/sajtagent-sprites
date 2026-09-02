@@ -104,6 +104,7 @@ effective policy, findings, and host configuration without credentials.
 - [OpenClaw agent loop](https://docs.openclaw.ai/agent-loop)
 - [OpenClaw sandboxing](https://docs.openclaw.ai/gateway/sandboxing)
 - [OpenClaw sandbox and tool policy](https://docs.openclaw.ai/gateway/sandbox-vs-tool-policy-vs-elevated)
+- [OpenClaw tool plugins](https://docs.openclaw.ai/plugins/tool-plugins)
 
 These upstream documents are current operational references, not vendored
 runtime code. Recheck them before changing integration details.
@@ -189,6 +190,13 @@ Use OpenClaw native tools for ordinary file reads, writes, patches, command
 execution, checks, and browser inspection. Add product MCP tools only when a
 real missing capability is demonstrated, such as a typed preview receipt or
 package-policy decision.
+
+The one V1 exception is the Runtime-owned, parameterless
+`siteagent_build_request` signal plugin under
+`openclaw-plugins/siteagent-build-request`. It is optional and absent from the
+model unless the turn's server-owned allowlist grants `build.request`. Its
+execution has no product side effects; Runtime stops on the upstream
+`tool.started` event and Site owns every authoritative build action after it.
 
 Tool policy is not a substitute for isolation. An allowed shell can write
 wherever its host filesystem permits, so the assigned worker must remain in a

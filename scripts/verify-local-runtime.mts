@@ -34,6 +34,7 @@ import {
 } from "../src/model-routing.ts"
 import {
   compileSessionPermissionModeV1,
+  hasRegisteredBuildRequestToolV1,
   type BuildJobRunnerV1,
 } from "../src/openclaw-gateway.ts"
 import {
@@ -46,6 +47,9 @@ import {
   MAX_AGENT_EVENT_SSE_BYTES_V1,
   MAX_AGENT_TURN_EVENTS_V1,
   MAX_AGENT_TURN_SSE_BYTES_V1,
+  assertRuntimeAgentTurnSupportedV1,
+  compileAgentTurnOpenClawToolPolicyV1,
+  compileBuildRequestOpenClawToolPolicyV1,
   compileConversationOnlyOpenClawToolPolicyV1,
   createOpenClawAgentNormalizerStateV1,
   normalizeOpenClawGatewayEventV1,
@@ -75,17 +79,100 @@ assert.deepEqual(compileConversationOnlyOpenClawToolPolicyV1(), {
   inheritedToolAllow: [],
   inheritedToolDeny: ["*"],
 })
+assert.deepEqual(compileBuildRequestOpenClawToolPolicyV1(), {
+  inheritedToolPolicyVersion: 1,
+  inheritedToolAllow: ["siteagent_build_request", "build.request"],
+  inheritedToolDeny: [],
+})
+assert.deepEqual(
+  compileAgentTurnOpenClawToolPolicyV1([
+    "conversation.respond",
+    "build.request",
+  ]),
+  compileBuildRequestOpenClawToolPolicyV1(),
+)
+assert.throws(
+  () => compileAgentTurnOpenClawToolPolicyV1([
+    "conversation.respond",
+    "project.read",
+    "build.request",
+  ]),
+  /agent_turn_tool_policy_not_supported/,
+)
+assert.equal(hasRegisteredBuildRequestToolV1(
+  {
+    plugins: [{
+      id: "siteagent-build-request",
+      installed: true,
+      enabled: true,
+      state: "enabled",
+    }],
+  },
+  {
+    groups: [{
+      source: "plugin",
+      pluginId: "siteagent-build-request",
+      tools: [{ id: "siteagent_build_request", source: "plugin" }],
+    }],
+  },
+), true)
+assert.equal(hasRegisteredBuildRequestToolV1(
+  {
+    plugins: [{
+      id: "siteagent-build-request",
+      installed: true,
+      enabled: false,
+      state: "disabled",
+    }],
+  },
+  {
+    groups: [{
+      source: "plugin",
+      pluginId: "siteagent-build-request",
+      tools: [{ id: "siteagent_build_request", source: "plugin" }],
+    }],
+  },
+), false)
+let fakeBuildRequestToolRegistered = true
 const fakeTurnRunner = {
   async health() {
-    return { connected: true, runtimeVersion: "openclaw-test" }
+    return {
+      connected: true,
+      runtimeVersion: "openclaw-test",
+      buildRequestToolRegistered: fakeBuildRequestToolRegistered,
+      ...(fakeBuildRequestToolRegistered
+        ? {}
+        : {
+            buildRequestToolReason:
+              "openclaw_build_request_tool_not_registered",
+          }),
+    }
   },
-  async runTurn(_input, emit) {
+  async runTurn(input, emit) {
+    if (input.policy.capabilities.includes("build.request")) {
+      if (input.turn.message === "invalid handoff") {
+        return { outcome: "build_handoff", toolCallId: "tool:missing" } as const
+      }
+      emit({
+        type: "tool.started",
+        payload: {
+          toolCallId: "tool:build-request-local-test",
+          capability: "build.request",
+          safeLabel: "siteagent_build_request",
+        },
+      })
+      return {
+        outcome: "build_handoff",
+        toolCallId: "tool:build-request-local-test",
+      } as const
+    }
     emit({ type: "agent.status", payload: { state: "thinking" } })
     emit({
       type: "message.delta",
       payload: { messageId: "message:local-test", delta: "Hej från OpenClaw" },
     })
     emit({ type: "turn.completed", payload: { outcome: "answered" } })
+    return { outcome: "terminal" } as const
   },
 } satisfies AgentTurnRunnerV1
 assert.deepEqual(parseGitStatusPathsV1(" M index.html\n?? preview.html"), [
@@ -142,6 +229,7 @@ try {
     agentTurnStreamTransport: string
     agentTurnStreamEnabled: boolean
     agentTurnCapabilities: string[]
+    buildRequestHandoffEnabled: boolean
     artifactReadEnabled: boolean
     agentProfileActivationContractVersion: number
     agentProfileActivationEnabled: boolean
@@ -150,7 +238,11 @@ try {
   assert.equal(healthBody.agentSessionContractVersion, 1)
   assert.equal(healthBody.agentTurnStreamTransport, "sse")
   assert.equal(healthBody.agentTurnStreamEnabled, true)
-  assert.deepEqual(healthBody.agentTurnCapabilities, ["conversation.respond"])
+  assert.deepEqual(healthBody.agentTurnCapabilities, [
+    "conversation.respond",
+    "build.request",
+  ])
+  assert.equal(healthBody.buildRequestHandoffEnabled, true)
   assert.equal(healthBody.artifactReadEnabled, false)
   assert.equal(healthBody.agentProfileActivationContractVersion, 1)
   assert.equal(healthBody.agentProfileActivationEnabled, true)
@@ -363,6 +455,53 @@ try {
     { model: "openai/gpt-5.6-sol", thinking: "xhigh" },
   )
 
+  const questionResume = structuredClone(directTurn)
+  questionResume.turn.replyToQuestionId = "question:local-test"
+  questionResume.turn.answerSelections = ["Ja"]
+  assert.throws(
+    () => assertRuntimeAgentTurnSupportedV1(questionResume),
+    /agent_question_resume_not_implemented/,
+  )
+
+  const supportedBuildTurn = structuredClone(directTurn)
+  supportedBuildTurn.turn.turnId = "turn:build-handoff-local"
+  supportedBuildTurn.turn.idempotencyKey = "idempotency:build-handoff-local"
+  supportedBuildTurn.turn.message = "Bygg en hero"
+  supportedBuildTurn.policy.turnId = supportedBuildTurn.turn.turnId
+  supportedBuildTurn.policy.capabilities = [
+    "conversation.respond",
+    "build.request",
+  ]
+  supportedBuildTurn.policy.allowedMutationIntents = ["site.change"]
+  supportedBuildTurn.policy.maxToolCalls = 1
+  supportedBuildTurn.baseSequence = 44
+  assert.doesNotThrow(() => assertRuntimeAgentTurnSupportedV1(supportedBuildTurn))
+
+  const multiIntentBuildTurn = structuredClone(supportedBuildTurn)
+  multiIntentBuildTurn.turn.turnId = "turn:multi-intent-local"
+  multiIntentBuildTurn.turn.idempotencyKey = "idempotency:multi-intent-local"
+  multiIntentBuildTurn.policy.turnId = multiIntentBuildTurn.turn.turnId
+  multiIntentBuildTurn.policy.allowedMutationIntents = [
+    "site.create",
+    "site.change",
+  ]
+  assert.throws(
+    () => assertRuntimeAgentTurnSupportedV1(multiIntentBuildTurn),
+    /agent_turn_capability_not_implemented/,
+  )
+  const extraCapabilityBuildTurn = structuredClone(supportedBuildTurn)
+  extraCapabilityBuildTurn.policy.capabilities.push("project.read")
+  assert.throws(
+    () => assertRuntimeAgentTurnSupportedV1(extraCapabilityBuildTurn),
+    /agent_turn_capability_not_implemented/,
+  )
+  const zeroToolBuildTurn = structuredClone(supportedBuildTurn)
+  zeroToolBuildTurn.policy.maxToolCalls = 0
+  assert.throws(
+    () => assertRuntimeAgentTurnSupportedV1(zeroToolBuildTurn),
+    /agent_turn_capability_not_implemented/,
+  )
+
   const unsignedTurn = await fetch(`${baseUrl}/v1/agent-turns`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -443,6 +582,108 @@ try {
     "agent_turn_already_started_use_site_resume",
   )
 
+  const buildTurnBody = JSON.stringify(supportedBuildTurn)
+  const buildTurnResponse = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: signedRuntimeHeaders("/v1/agent-turns", buildTurnBody),
+    body: buildTurnBody,
+  })
+  assert.equal(buildTurnResponse.status, 200)
+  const buildFrames = (await buildTurnResponse.text()).trim().split("\n\n")
+  const buildEvents = buildFrames.map((frame) => {
+    const data = frame.split("\n").find((line) => line.startsWith("data: "))
+    assert(data)
+    return AgentEventV1Schema.parse(JSON.parse(data.slice("data: ".length)))
+  })
+  assert.deepEqual(buildEvents.map((event) => event.sequence), [45, 46])
+  assert.deepEqual(buildEvents.map((event) => event.type), [
+    "turn.accepted",
+    "tool.started",
+  ])
+  const buildHandoffEvent = buildEvents[1]
+  assert.equal(
+    buildHandoffEvent?.type === "tool.started"
+      ? buildHandoffEvent.payload.capability
+      : undefined,
+    "build.request",
+  )
+  assert.equal(validateAgentTurnAgainstPolicyV1(
+    supportedBuildTurn.session,
+    supportedBuildTurn.policy,
+    buildEvents,
+    { baseSequence: supportedBuildTurn.baseSequence, requireTerminal: false },
+  ).success, true)
+
+  const multiIntentBody = JSON.stringify(multiIntentBuildTurn)
+  const multiIntentResponse = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: signedRuntimeHeaders("/v1/agent-turns", multiIntentBody),
+    body: multiIntentBody,
+  })
+  assert.equal(multiIntentResponse.status, 409)
+
+  const unavailableBuildTurn = structuredClone(supportedBuildTurn)
+  unavailableBuildTurn.turn.turnId = "turn:unavailable-handoff-local"
+  unavailableBuildTurn.turn.idempotencyKey =
+    "idempotency:unavailable-handoff-local"
+  unavailableBuildTurn.policy.turnId = unavailableBuildTurn.turn.turnId
+  const unavailableBuildBody = JSON.stringify(unavailableBuildTurn)
+  fakeBuildRequestToolRegistered = false
+  const degradedHealthResponse = await fetch(`${baseUrl}/health`)
+  const degradedHealth = await degradedHealthResponse.json() as {
+    agentTurnCapabilities: string[]
+    buildRequestHandoffEnabled: boolean
+    buildRequestHandoffReason?: string
+  }
+  assert.deepEqual(degradedHealth.agentTurnCapabilities, [
+    "conversation.respond",
+  ])
+  assert.equal(degradedHealth.buildRequestHandoffEnabled, false)
+  assert.equal(
+    degradedHealth.buildRequestHandoffReason,
+    "openclaw_build_request_tool_not_registered",
+  )
+  const unavailableBuildResponse = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(
+      "/v1/agent-turns",
+      unavailableBuildBody,
+    ),
+    body: unavailableBuildBody,
+  })
+  assert.equal(unavailableBuildResponse.status, 503)
+  assert.equal(
+    (await unavailableBuildResponse.json() as { error: string }).error,
+    "agent_build_request_handoff_unavailable",
+  )
+  fakeBuildRequestToolRegistered = true
+
+  const invalidHandoffTurn = structuredClone(supportedBuildTurn)
+  invalidHandoffTurn.turn.turnId = "turn:invalid-handoff-local"
+  invalidHandoffTurn.turn.idempotencyKey = "idempotency:invalid-handoff-local"
+  invalidHandoffTurn.turn.message = "invalid handoff"
+  invalidHandoffTurn.policy.turnId = invalidHandoffTurn.turn.turnId
+  invalidHandoffTurn.baseSequence = 60
+  const invalidHandoffBody = JSON.stringify(invalidHandoffTurn)
+  const invalidHandoffResponse = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: signedRuntimeHeaders("/v1/agent-turns", invalidHandoffBody),
+    body: invalidHandoffBody,
+  })
+  assert.equal(invalidHandoffResponse.status, 200)
+  const invalidHandoffEvents = (await invalidHandoffResponse.text())
+    .trim()
+    .split("\n\n")
+    .map((frame) => {
+      const data = frame.split("\n").find((line) => line.startsWith("data: "))
+      assert(data)
+      return AgentEventV1Schema.parse(JSON.parse(data.slice("data: ".length)))
+    })
+  assert.deepEqual(invalidHandoffEvents.map((event) => event.type), [
+    "turn.accepted",
+    "turn.failed",
+  ])
+
   const normalizerState = createOpenClawAgentNormalizerStateV1()
   const normalizeContext = {
     runId: "openclaw-run:test",
@@ -498,6 +739,48 @@ try {
       data: { phase: "start", name: "exec", toolCallId: "tool-call-1" },
     },
   }, normalizeContext), /openclaw_unauthorized_tool_event/)
+
+  const buildNormalizerContext = {
+    runId: "openclaw-run:build-test",
+    turnId: supportedBuildTurn.turn.turnId,
+    capabilities: supportedBuildTurn.policy.capabilities,
+    state: createOpenClawAgentNormalizerStateV1(),
+  }
+  const normalizedBuildRequest = normalizeOpenClawGatewayEventV1({
+    event: "agent",
+    payload: {
+      runId: "openclaw-run:build-test",
+      seq: 0,
+      stream: "tool",
+      ts: Date.now(),
+      data: {
+        phase: "start",
+        name: "siteagent_build_request",
+        toolCallId: "upstream-build-call",
+      },
+    },
+  }, buildNormalizerContext)[0]
+  assert.equal(normalizedBuildRequest?.type, "tool.started")
+  assert.equal(
+    normalizedBuildRequest?.type === "tool.started"
+      ? normalizedBuildRequest.payload.capability
+      : undefined,
+    "build.request",
+  )
+  assert.throws(() => normalizeOpenClawGatewayEventV1({
+    event: "agent",
+    payload: {
+      runId: "openclaw-run:build-test",
+      seq: 1,
+      stream: "tool",
+      ts: Date.now(),
+      data: {
+        phase: "start",
+        name: "build.request",
+        toolCallId: "duplicate-upstream-build-call",
+      },
+    },
+  }, buildNormalizerContext), /openclaw_duplicate_build_request/)
 
   const createdAt = new Date()
   const expiresAt = new Date(createdAt.getTime() + 10 * 60_000)

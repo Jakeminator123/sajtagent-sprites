@@ -3,6 +3,8 @@
 .venv/
 node_modules/
 dist/
+!openclaw-plugins/siteagent-build-request/dist/
+!openclaw-plugins/siteagent-build-request/dist/*.js
 build/
 coverage/
 __pycache__/

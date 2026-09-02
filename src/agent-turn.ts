@@ -12,7 +12,17 @@ import {
 
 export const RUNTIME_AGENT_TURN_CAPABILITIES_V1 = [
   "conversation.respond",
+  "build.request",
 ] as const satisfies readonly AgentTurnCapabilityV1[]
+
+export const OPENCLAW_BUILD_REQUEST_PLUGIN_ID_V1 =
+  "siteagent-build-request"
+export const OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1 =
+  "siteagent_build_request"
+export const OPENCLAW_BUILD_REQUEST_TOOL_ALIASES_V1 = [
+  OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1,
+  "build.request",
+] as const
 
 export const MAX_AGENT_TURN_EVENTS_V1 = 4_096
 export const MAX_AGENT_EVENT_SSE_BYTES_V1 = 32 * 1024
@@ -25,6 +35,34 @@ export function compileConversationOnlyOpenClawToolPolicyV1() {
     inheritedToolAllow: [] as string[],
     inheritedToolDeny: ["*"],
   }
+}
+
+export function compileBuildRequestOpenClawToolPolicyV1() {
+  return {
+    inheritedToolPolicyVersion: 1 as const,
+    inheritedToolAllow: [...OPENCLAW_BUILD_REQUEST_TOOL_ALIASES_V1],
+    inheritedToolDeny: [] as string[],
+  }
+}
+
+export function compileAgentTurnOpenClawToolPolicyV1(
+  capabilities: readonly AgentTurnCapabilityV1[],
+) {
+  if (
+    capabilities.length === 1 &&
+    capabilities[0] === "conversation.respond"
+  ) {
+    return compileConversationOnlyOpenClawToolPolicyV1()
+  }
+  const capabilitySet = new Set(capabilities)
+  if (
+    capabilities.length === 2 &&
+    capabilitySet.has("conversation.respond") &&
+    capabilitySet.has("build.request")
+  ) {
+    return compileBuildRequestOpenClawToolPolicyV1()
+  }
+  throw new Error("agent_turn_tool_policy_not_supported")
 }
 
 export const RuntimeAgentTurnIngressV1Schema = z
@@ -75,12 +113,18 @@ export interface AgentTurnRunnerV1 {
     connected: boolean
     runtimeVersion?: string
     reason?: string
+    buildRequestToolRegistered?: boolean
+    buildRequestToolReason?: string
   }>
   runTurn(
     input: RuntimeAgentTurnIngressV1,
     emit: (event: AgentEventDraftV1) => void,
-  ): Promise<void>
+  ): Promise<AgentTurnRunResultV1>
 }
+
+export type AgentTurnRunResultV1 =
+  | { outcome: "terminal" }
+  | { outcome: "build_handoff"; toolCallId: string }
 
 export const UNAVAILABLE_AGENT_TURN_RUNNER_V1: AgentTurnRunnerV1 = {
   async health() {
@@ -101,15 +145,25 @@ export function assertRuntimeAgentTurnSupportedV1(
   if (now >= Date.parse(input.policy.expiresAt)) {
     throw new Error("agent_turn_policy_expired")
   }
-  if (
-    input.policy.capabilities.length !== 1 ||
-    input.policy.capabilities[0] !== "conversation.respond" ||
-    input.policy.maxToolCalls !== 0
-  ) {
-    throw new Error("agent_turn_capability_not_implemented")
-  }
   if (input.turn.replyToQuestionId || input.turn.answerSelections) {
     throw new Error("agent_question_resume_not_implemented")
+  }
+  if (
+    input.policy.capabilities.length === 1 &&
+    input.policy.capabilities[0] === "conversation.respond" &&
+    input.policy.maxToolCalls === 0
+  ) {
+    return
+  }
+  const capabilities = new Set(input.policy.capabilities)
+  if (
+    capabilities.size !== 2 ||
+    !capabilities.has("conversation.respond") ||
+    !capabilities.has("build.request") ||
+    input.policy.maxToolCalls < 1 ||
+    input.policy.allowedMutationIntents.length !== 1
+  ) {
+    throw new Error("agent_turn_capability_not_implemented")
   }
 }
 
@@ -127,6 +181,7 @@ export function createAgentEventEmitterV1(
 ) {
   let count = 0
   let terminal = false
+  let lastEvent: AgentEventV1 | undefined
 
   return {
     emit(draft: AgentEventDraftV1): AgentEventV1 {
@@ -149,6 +204,7 @@ export function createAgentEventEmitterV1(
       })
       count += 1
       terminal = event.type === "turn.completed" || event.type === "turn.failed"
+      lastEvent = event
       sink(event)
       return event
     },
@@ -157,6 +213,9 @@ export function createAgentEventEmitterV1(
     },
     get terminal() {
       return terminal
+    },
+    get lastEvent() {
+      return lastEvent
     },
   }
 }
@@ -179,10 +238,11 @@ type OpenClawAgentPayloadV1 = {
 
 export type OpenClawAgentNormalizerStateV1 = {
   assistantText: string
+  buildRequestToolCallId: string | null
 }
 
 export function createOpenClawAgentNormalizerStateV1(): OpenClawAgentNormalizerStateV1 {
-  return { assistantText: "" }
+  return { assistantText: "", buildRequestToolCallId: null }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -215,7 +275,9 @@ function toolCapability(name: string): "project.read" | "checks.run" | "build.re
     return "project.read"
   }
   if (name === "checks.run") return "checks.run"
-  if (["build.request", "siteagent_build_request"].includes(name)) return "build.request"
+  if ((OPENCLAW_BUILD_REQUEST_TOOL_ALIASES_V1 as readonly string[]).includes(name)) {
+    return "build.request"
+  }
   return null
 }
 
@@ -332,6 +394,12 @@ export function normalizeOpenClawGatewayEventV1(
     }
     const toolCallId = opaqueIdentifier("tool", rawToolCallId || `${context.runId}:${name}`)
     if (data.phase === "start") {
+      if (capability === "build.request") {
+        if (context.state.buildRequestToolCallId !== null) {
+          throw new Error("openclaw_duplicate_build_request")
+        }
+        context.state.buildRequestToolCallId = toolCallId
+      }
       return [{
         type: "tool.started",
         occurredAt,

@@ -421,6 +421,14 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         const signedPrivateRoutesEnabled = hasValidRuntimeSigningKey(
           options.signingKey,
         )
+        const buildRequestHandoffEnabled = Boolean(
+          signedPrivateRoutesEnabled &&
+          turnGatewayHealth.connected &&
+          turnGatewayHealth.buildRequestToolRegistered === true,
+        )
+        const agentTurnCapabilities = buildRequestHandoffEnabled
+          ? RUNTIME_AGENT_TURN_CAPABILITIES_V1
+          : (["conversation.respond"] as const)
         sendJson(
           response,
           200,
@@ -436,7 +444,15 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             agentTurnStreamEnabled: Boolean(
               signedPrivateRoutesEnabled && turnGatewayHealth.connected,
             ),
-            agentTurnCapabilities: RUNTIME_AGENT_TURN_CAPABILITIES_V1,
+            agentTurnCapabilities,
+            buildRequestHandoffEnabled,
+            ...(!buildRequestHandoffEnabled &&
+            turnGatewayHealth.buildRequestToolReason
+              ? {
+                  buildRequestHandoffReason:
+                    turnGatewayHealth.buildRequestToolReason,
+                }
+              : {}),
             artifactReadContractVersion: ARTIFACT_READ_CONTRACT_VERSION_V1,
             artifactReadEnabled: Boolean(
               signedPrivateRoutesEnabled && artifactReaderAvailable,
@@ -690,6 +706,20 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
           }, corsHeaders)
           return
         }
+        if (input.policy.capabilities.includes("build.request")) {
+          const turnHealth = await turnRunner.health()
+          if (
+            !turnHealth.connected ||
+            turnHealth.buildRequestToolRegistered !== true
+          ) {
+            sendJson(response, 503, {
+              error: "agent_build_request_handoff_unavailable",
+              message:
+                "OpenClaw build-request handoff tool is not registered.",
+            }, corsHeaders)
+            return
+          }
+        }
 
         const now = Date.now()
         for (const [key, value] of turnRequests) {
@@ -760,8 +790,21 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
           payload: { acceptedAt },
         })
         try {
-          await turnRunner.runTurn(input, (event) => emitter.emit(event))
-          if (!emitter.terminal) {
+          const result = await turnRunner.runTurn(
+            input,
+            (event) => emitter.emit(event),
+          )
+          if (result.outcome === "build_handoff") {
+            const lastEvent = emitter.lastEvent
+            if (
+              emitter.terminal ||
+              lastEvent?.type !== "tool.started" ||
+              lastEvent.payload.capability !== "build.request" ||
+              lastEvent.payload.toolCallId !== result.toolCallId
+            ) {
+              throw new Error("agent_turn_invalid_build_handoff")
+            }
+          } else if (!emitter.terminal) {
             emitter.emit({
               type: "turn.failed",
               payload: {
