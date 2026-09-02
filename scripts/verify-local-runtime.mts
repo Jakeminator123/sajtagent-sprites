@@ -34,6 +34,7 @@ import {
 } from "../src/model-routing.ts"
 import {
   compileSessionPermissionModeV1,
+  deriveAgentTurnSessionCreateIdempotencyKeyV1,
   deriveAgentTurnSessionLabelV1,
   deriveAgentTurnSessionKeyV1,
   hasRegisteredBuildRequestToolV1,
@@ -154,6 +155,19 @@ assert.match(
   /^Sajtagent session v2 [A-Za-z0-9_-]{32}$/,
 )
 assert.doesNotMatch(privateAgentTurnSessionLabel, /project:test|abcdefghijkl/)
+const privateAgentTurnSessionCreateIdempotencyKey =
+  deriveAgentTurnSessionCreateIdempotencyKeyV1(
+    "project:test",
+    "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+  )
+assert.match(
+  privateAgentTurnSessionCreateIdempotencyKey,
+  /^session:v2:[A-Za-z0-9_-]{32}$/,
+)
+assert.doesNotMatch(
+  privateAgentTurnSessionCreateIdempotencyKey,
+  /project:test|abcdefghijkl/,
+)
 assert.equal(
   OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
   "agent:main:sajtagent-controller-v1",
