@@ -1,0 +1,25 @@
+{
+  "id": "siteagent-build-request",
+  "name": "Sajtagent Build Request",
+  "description": "Adds the typed Site-owned build-request handoff signal.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "siteagent_build_request"
+    ]
+  },
+  "toolMetadata": {
+    "siteagent_build_request": {
+      "optional": true,
+      "sideEffecting": false
+    }
+  }
+}

@@ -1,8 +1,9 @@
 # Private Agent Turn Ingress V1
 
-Status: build-request handoff implemented on an isolated Runtime branch; not
-deployed. The live Runtime must not advertise this capability until its
-OpenClaw handoff tool is also registered and the Site join has been verified.
+Status: build-request handoff and its Runtime-owned OpenClaw plugin are
+implemented on an isolated Runtime branch; not deployed. The live Runtime must
+not advertise this capability until the plugin is installed and enabled and
+the Site join has been verified.
 
 This is the private server-to-server touchdown between `sajtagent-site` and
 the Sprite runtime. It is not a browser API and it does not replace the
@@ -119,11 +120,17 @@ Unknown streams are ignored. Unsupported replacement text, secret questions,
 and ungranted tools fail closed. Runtime never emits `preview.ready`; only Site
 may do that after acceptance and persistence.
 
-The build transport depends on a separately registered Runtime-owned OpenClaw
-tool named `siteagent_build_request` (with `build.request` accepted as its
-normalized alias). An allowlist cannot make an unregistered tool callable, so
-transport deployment and health advertisement are held until that registration
-and the Site join are verified together.
+The build transport uses the Runtime-owned plugin in
+`openclaw-plugins/siteagent-build-request`. It registers the optional,
+parameterless OpenClaw tool `siteagent_build_request`; Runtime normalizes that
+name to the semantic `build.request` capability. The tool returns only a
+non-authoritative handoff acknowledgement and performs no file, network,
+credential, BuildJob, preview or persistence action.
+
+Runtime probes both `plugins.list` and `tools.catalog`. An allowlist cannot make
+an unregistered tool callable, so `build.request` is withheld from health and
+new build-capable turns fail with HTTP 503 until the plugin is installed,
+enabled and visible in the plugin tool catalog.
 
 OpenClaw model selection is server-owned. Small direct questions use Luna with
 thinking off, routine conversation uses Terra with low or medium thinking, and
@@ -140,13 +147,16 @@ xhigh thinking. Reasoning visibility stays off on every route.
   "agentTurnStreamTransport": "sse",
   "agentTurnStreamEnabled": true,
   "agentTurnCapabilities": ["conversation.respond", "build.request"],
+  "buildRequestHandoffEnabled": true,
   "artifactReadEnabled": false
 }
 ```
 
 `agentTurnStreamEnabled` is true only when HMAC signing is configured and the
-turn runner can connect to OpenClaw. The build capability must not reach live
-health until the OpenClaw handoff tool and Site continuation are present.
+turn runner can connect to OpenClaw. When the plugin probe is not green,
+`agentTurnCapabilities` contains only `conversation.respond`,
+`buildRequestHandoffEnabled` is false, and a safe reason code may be present.
+The Site continuation still has to be verified before rollout.
 
 ## Verification
 

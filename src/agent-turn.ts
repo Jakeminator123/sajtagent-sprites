@@ -15,6 +15,15 @@ export const RUNTIME_AGENT_TURN_CAPABILITIES_V1 = [
   "build.request",
 ] as const satisfies readonly AgentTurnCapabilityV1[]
 
+export const OPENCLAW_BUILD_REQUEST_PLUGIN_ID_V1 =
+  "siteagent-build-request"
+export const OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1 =
+  "siteagent_build_request"
+export const OPENCLAW_BUILD_REQUEST_TOOL_ALIASES_V1 = [
+  OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1,
+  "build.request",
+] as const
+
 export const MAX_AGENT_TURN_EVENTS_V1 = 4_096
 export const MAX_AGENT_EVENT_SSE_BYTES_V1 = 32 * 1024
 export const MAX_AGENT_TURN_SSE_BYTES_V1 = 4 * 1024 * 1024
@@ -31,7 +40,7 @@ export function compileConversationOnlyOpenClawToolPolicyV1() {
 export function compileBuildRequestOpenClawToolPolicyV1() {
   return {
     inheritedToolPolicyVersion: 1 as const,
-    inheritedToolAllow: ["siteagent_build_request", "build.request"],
+    inheritedToolAllow: [...OPENCLAW_BUILD_REQUEST_TOOL_ALIASES_V1],
     inheritedToolDeny: [] as string[],
   }
 }
@@ -104,6 +113,8 @@ export interface AgentTurnRunnerV1 {
     connected: boolean
     runtimeVersion?: string
     reason?: string
+    buildRequestToolRegistered?: boolean
+    buildRequestToolReason?: string
   }>
   runTurn(
     input: RuntimeAgentTurnIngressV1,
@@ -264,7 +275,9 @@ function toolCapability(name: string): "project.read" | "checks.run" | "build.re
     return "project.read"
   }
   if (name === "checks.run") return "checks.run"
-  if (["build.request", "siteagent_build_request"].includes(name)) return "build.request"
+  if ((OPENCLAW_BUILD_REQUEST_TOOL_ALIASES_V1 as readonly string[]).includes(name)) {
+    return "build.request"
+  }
   return null
 }
 

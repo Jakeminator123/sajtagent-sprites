@@ -16,6 +16,8 @@ import {
 import type { OpenClawModelRouteV1 } from "./model-routing.ts"
 import { routeAgentTurnModelV1 } from "./model-routing.ts"
 import {
+  OPENCLAW_BUILD_REQUEST_PLUGIN_ID_V1,
+  OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1,
   compileAgentTurnOpenClawToolPolicyV1,
   createOpenClawAgentNormalizerStateV1,
   normalizeOpenClawGatewayEventV1,
@@ -42,6 +44,23 @@ type GatewayStatus = {
   degradedSecretOwners?: unknown[]
 }
 
+type ToolsCatalogResult = {
+  groups?: Array<{
+    source?: unknown
+    pluginId?: unknown
+    tools?: Array<{ id?: unknown; source?: unknown }>
+  }>
+}
+
+type PluginsListResult = {
+  plugins?: Array<{
+    id?: unknown
+    installed?: unknown
+    enabled?: unknown
+    state?: unknown
+  }>
+}
+
 type AgentAcceptance = {
   runId?: string
   status?: string
@@ -63,6 +82,8 @@ export type RuntimeGatewayHealthV1 = {
   connected: boolean
   runtimeVersion?: string
   reason?: string
+  buildRequestToolRegistered?: boolean
+  buildRequestToolReason?: string
 }
 
 export interface BuildJobRunnerV1 {
@@ -86,6 +107,40 @@ export const UNAVAILABLE_BUILD_JOB_RUNNER_V1: BuildJobRunnerV1 = {
   async run(job) {
     return failureReport(job, "openclaw_not_connected", "OpenClaw Gateway-runnern är inte konfigurerad.", true)
   },
+}
+
+export function hasRegisteredBuildRequestToolV1(
+  plugins: PluginsListResult,
+  catalog: ToolsCatalogResult,
+): boolean {
+  const pluginReady = plugins.plugins?.some((plugin) =>
+    plugin.id === OPENCLAW_BUILD_REQUEST_PLUGIN_ID_V1 &&
+    plugin.installed === true &&
+    plugin.enabled === true &&
+    plugin.state === "enabled"
+  ) === true
+  const toolReady = catalog.groups?.some((group) =>
+    group.source === "plugin" &&
+    group.pluginId === OPENCLAW_BUILD_REQUEST_PLUGIN_ID_V1 &&
+    group.tools?.some((tool) =>
+      tool.id === OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1 &&
+      tool.source === "plugin"
+    ) === true
+  ) === true
+  return pluginReady && toolReady
+}
+
+async function probeBuildRequestToolV1(
+  client: GatewayRequestClient,
+): Promise<boolean> {
+  const [plugins, catalog] = await Promise.all([
+    client.request<PluginsListResult>("plugins.list", {}),
+    client.request<ToolsCatalogResult>("tools.catalog", {
+      agentId: "main",
+      includePlugins: true,
+    }),
+  ])
+  return hasRegisteredBuildRequestToolV1(plugins, catalog)
 }
 
 function diagnosticText(value: unknown): string | undefined {
@@ -269,7 +324,29 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
     try {
       return await this.withClient(async (client) => {
         const status = await client.request<GatewayStatus>("status", {})
-        return { connected: true, runtimeVersion: status.runtimeVersion }
+        try {
+          const buildRequestToolRegistered =
+            await probeBuildRequestToolV1(client)
+          return {
+            connected: true,
+            runtimeVersion: status.runtimeVersion,
+            buildRequestToolRegistered,
+            ...(buildRequestToolRegistered
+              ? {}
+              : {
+                  buildRequestToolReason:
+                    "openclaw_build_request_tool_not_registered",
+                }),
+          }
+        } catch {
+          return {
+            connected: true,
+            runtimeVersion: status.runtimeVersion,
+            buildRequestToolRegistered: false,
+            buildRequestToolReason:
+              "openclaw_build_request_tool_probe_failed",
+          }
+        }
       })
     } catch (error) {
       return {
@@ -351,6 +428,12 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
     }
 
     return await this.withClient(async (client) => {
+      if (
+        buildRequestEnabled &&
+        !(await probeBuildRequestToolV1(client))
+      ) {
+        throw new Error("openclaw_build_request_tool_not_registered")
+      }
       const resolved = await client.request<SessionResolveResult>("sessions.resolve", {
         key: sessionKey,
         agentId: "main",

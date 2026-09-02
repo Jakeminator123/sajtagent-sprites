@@ -15,13 +15,14 @@
   "scripts": {
     "check:contracts": "node scripts/verify-builder-contracts.mts && node scripts/verify-agent-session-contract.mts && node scripts/verify-artifact-read-contract.mts && tsc -p tsconfig.contracts.json",
     "check:agent-session": "node scripts/verify-agent-session-contract.mts && tsc -p tsconfig.agent-session.json",
-    "check:runtime": "node scripts/verify-local-runtime.mts && tsc -p tsconfig.runtime.json",
+    "check:runtime": "node scripts/verify-openclaw-build-request-plugin.mjs && node scripts/verify-local-runtime.mts && tsc -p tsconfig.runtime.json",
     "dev:runtime": "node src/server.ts",
     "profile:materialize": "node scripts/materialize-openclaw-profile.mts"
   },
   "dependencies": {
     "@openclaw/gateway-client": "2026.8.1",
     "@openclaw/gateway-protocol": "2026.8.1",
+    "typebox": "1.3.17",
     "zod": "^3.24.1"
   },
   "devDependencies": {

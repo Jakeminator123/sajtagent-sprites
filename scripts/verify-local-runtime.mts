@@ -34,6 +34,7 @@ import {
 } from "../src/model-routing.ts"
 import {
   compileSessionPermissionModeV1,
+  hasRegisteredBuildRequestToolV1,
   type BuildJobRunnerV1,
 } from "../src/openclaw-gateway.ts"
 import {
@@ -98,9 +99,54 @@ assert.throws(
   ]),
   /agent_turn_tool_policy_not_supported/,
 )
+assert.equal(hasRegisteredBuildRequestToolV1(
+  {
+    plugins: [{
+      id: "siteagent-build-request",
+      installed: true,
+      enabled: true,
+      state: "enabled",
+    }],
+  },
+  {
+    groups: [{
+      source: "plugin",
+      pluginId: "siteagent-build-request",
+      tools: [{ id: "siteagent_build_request", source: "plugin" }],
+    }],
+  },
+), true)
+assert.equal(hasRegisteredBuildRequestToolV1(
+  {
+    plugins: [{
+      id: "siteagent-build-request",
+      installed: true,
+      enabled: false,
+      state: "disabled",
+    }],
+  },
+  {
+    groups: [{
+      source: "plugin",
+      pluginId: "siteagent-build-request",
+      tools: [{ id: "siteagent_build_request", source: "plugin" }],
+    }],
+  },
+), false)
+let fakeBuildRequestToolRegistered = true
 const fakeTurnRunner = {
   async health() {
-    return { connected: true, runtimeVersion: "openclaw-test" }
+    return {
+      connected: true,
+      runtimeVersion: "openclaw-test",
+      buildRequestToolRegistered: fakeBuildRequestToolRegistered,
+      ...(fakeBuildRequestToolRegistered
+        ? {}
+        : {
+            buildRequestToolReason:
+              "openclaw_build_request_tool_not_registered",
+          }),
+    }
   },
   async runTurn(input, emit) {
     if (input.policy.capabilities.includes("build.request")) {
@@ -183,6 +229,7 @@ try {
     agentTurnStreamTransport: string
     agentTurnStreamEnabled: boolean
     agentTurnCapabilities: string[]
+    buildRequestHandoffEnabled: boolean
     artifactReadEnabled: boolean
     agentProfileActivationContractVersion: number
     agentProfileActivationEnabled: boolean
@@ -195,6 +242,7 @@ try {
     "conversation.respond",
     "build.request",
   ])
+  assert.equal(healthBody.buildRequestHandoffEnabled, true)
   assert.equal(healthBody.artifactReadEnabled, false)
   assert.equal(healthBody.agentProfileActivationContractVersion, 1)
   assert.equal(healthBody.agentProfileActivationEnabled, true)
@@ -573,6 +621,42 @@ try {
     body: multiIntentBody,
   })
   assert.equal(multiIntentResponse.status, 409)
+
+  const unavailableBuildTurn = structuredClone(supportedBuildTurn)
+  unavailableBuildTurn.turn.turnId = "turn:unavailable-handoff-local"
+  unavailableBuildTurn.turn.idempotencyKey =
+    "idempotency:unavailable-handoff-local"
+  unavailableBuildTurn.policy.turnId = unavailableBuildTurn.turn.turnId
+  const unavailableBuildBody = JSON.stringify(unavailableBuildTurn)
+  fakeBuildRequestToolRegistered = false
+  const degradedHealthResponse = await fetch(`${baseUrl}/health`)
+  const degradedHealth = await degradedHealthResponse.json() as {
+    agentTurnCapabilities: string[]
+    buildRequestHandoffEnabled: boolean
+    buildRequestHandoffReason?: string
+  }
+  assert.deepEqual(degradedHealth.agentTurnCapabilities, [
+    "conversation.respond",
+  ])
+  assert.equal(degradedHealth.buildRequestHandoffEnabled, false)
+  assert.equal(
+    degradedHealth.buildRequestHandoffReason,
+    "openclaw_build_request_tool_not_registered",
+  )
+  const unavailableBuildResponse = await fetch(`${baseUrl}/v1/agent-turns`, {
+    method: "POST",
+    headers: signedRuntimeHeaders(
+      "/v1/agent-turns",
+      unavailableBuildBody,
+    ),
+    body: unavailableBuildBody,
+  })
+  assert.equal(unavailableBuildResponse.status, 503)
+  assert.equal(
+    (await unavailableBuildResponse.json() as { error: string }).error,
+    "agent_build_request_handoff_unavailable",
+  )
+  fakeBuildRequestToolRegistered = true
 
   const invalidHandoffTurn = structuredClone(supportedBuildTurn)
   invalidHandoffTurn.turn.turnId = "turn:invalid-handoff-local"

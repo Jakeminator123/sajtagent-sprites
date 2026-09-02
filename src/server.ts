@@ -421,6 +421,14 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         const signedPrivateRoutesEnabled = hasValidRuntimeSigningKey(
           options.signingKey,
         )
+        const buildRequestHandoffEnabled = Boolean(
+          signedPrivateRoutesEnabled &&
+          turnGatewayHealth.connected &&
+          turnGatewayHealth.buildRequestToolRegistered === true,
+        )
+        const agentTurnCapabilities = buildRequestHandoffEnabled
+          ? RUNTIME_AGENT_TURN_CAPABILITIES_V1
+          : (["conversation.respond"] as const)
         sendJson(
           response,
           200,
@@ -436,7 +444,15 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             agentTurnStreamEnabled: Boolean(
               signedPrivateRoutesEnabled && turnGatewayHealth.connected,
             ),
-            agentTurnCapabilities: RUNTIME_AGENT_TURN_CAPABILITIES_V1,
+            agentTurnCapabilities,
+            buildRequestHandoffEnabled,
+            ...(!buildRequestHandoffEnabled &&
+            turnGatewayHealth.buildRequestToolReason
+              ? {
+                  buildRequestHandoffReason:
+                    turnGatewayHealth.buildRequestToolReason,
+                }
+              : {}),
             artifactReadContractVersion: ARTIFACT_READ_CONTRACT_VERSION_V1,
             artifactReadEnabled: Boolean(
               signedPrivateRoutesEnabled && artifactReaderAvailable,
@@ -689,6 +705,20 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             error: error instanceof Error ? error.message : "agent_turn_not_supported",
           }, corsHeaders)
           return
+        }
+        if (input.policy.capabilities.includes("build.request")) {
+          const turnHealth = await turnRunner.health()
+          if (
+            !turnHealth.connected ||
+            turnHealth.buildRequestToolRegistered !== true
+          ) {
+            sendJson(response, 503, {
+              error: "agent_build_request_handoff_unavailable",
+              message:
+                "OpenClaw build-request handoff tool is not registered.",
+            }, corsHeaders)
+            return
+          }
         }
 
         const now = Date.now()
