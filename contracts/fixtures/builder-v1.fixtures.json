@@ -179,7 +179,7 @@
         "jobId": "job-001",
         "sourceRunId": "run-001",
         "baseRevisionId": "revision-001",
-        "candidateRevisionId": "candidate-001",
+        "candidateRevisionId": "revision:sha256:7777777777777777777777777777777777777777777777777777777777777777",
         "changedPaths": [
           "app/page.tsx",
           "app/globals.css"
@@ -217,7 +217,7 @@
         "jobId": "job-001",
         "sourceRunId": "run-001",
         "baseRevisionId": "revision-001",
-        "candidateRevisionId": "candidate-001",
+        "candidateRevisionId": "revision:sha256:7777777777777777777777777777777777777777777777777777777777777777",
         "versionId": "version-001",
         "changedPaths": [],
         "artifacts": [],

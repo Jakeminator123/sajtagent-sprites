@@ -13,7 +13,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "artifact": {
@@ -38,7 +38,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "artifact": {
@@ -63,7 +63,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "artifact": {
@@ -89,7 +89,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "maxBytes": 1048576,
@@ -118,7 +118,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "maxBytes": 1048576,
@@ -147,7 +147,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "maxBytes": 1048576,
@@ -176,7 +176,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         },
         "maxBytes": 1048576,
@@ -212,7 +212,7 @@
           "jobId": "job:one",
           "baseRevisionId": "revision:base",
           "sourceRunId": "openclaw:run-one",
-          "candidateRevisionId": "candidate:one",
+          "candidateRevisionId": "revision:sha256:8888888888888888888888888888888888888888888888888888888888888888",
           "reportedAt": "2026-09-01T12:00:00.000Z"
         }
       }

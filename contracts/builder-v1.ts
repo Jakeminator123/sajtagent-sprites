@@ -6,6 +6,10 @@ const IdentifierV1Schema = z
   .max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
 
+export const CandidateRevisionIdV1Schema = z
+  .string()
+  .regex(/^revision:sha256:[a-f0-9]{64}$/)
+
 const TimestampV1Schema = z.string().datetime({ offset: true })
 const OpaqueRefV1Schema = z.string().min(1).max(512)
 const RelativePathV1Schema = z
@@ -205,7 +209,7 @@ export const WorkerCandidateReportV1Schema = z
     jobId: IdentifierV1Schema,
     sourceRunId: IdentifierV1Schema,
     baseRevisionId: IdentifierV1Schema,
-    candidateRevisionId: IdentifierV1Schema,
+    candidateRevisionId: CandidateRevisionIdV1Schema,
     changedPaths: z.array(RelativePathV1Schema).max(5_000),
     artifacts: z.array(ArtifactRefV1Schema).max(256),
     receipts: z.array(EvidenceReceiptV1Schema).max(2_000),

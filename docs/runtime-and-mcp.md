@@ -11,13 +11,28 @@ authorized by a candidate report. The exact local-only turn ingress is documente
 [`private-agent-turn-ingress-v1.md`](./private-agent-turn-ingress-v1.md). The
 artifact reader is documented in
 [`private-artifact-read-v1.md`](./private-artifact-read-v1.md). The
-build adapter creates one server-owned detached Git worktree per idempotent job, creates a private
-OpenClaw session rooted at that worktree, runs the selected model, and
+build adapter materializes one plain, secret-free filesystem snapshot per
+idempotent job, creates a private OpenClaw session rooted at that directory,
+runs the selected model, and
 normalizes the result into a validated `WorkerReportV1`.
-When `checks.run` is granted, the adapter independently executes the project's
-existing `npm run check` with a scrubbed environment. When `preview.manage` is
-granted, a candidate is accepted only when a bounded HTML preview artifact can
-be found and hashed.
+For the first signed `site.create`, Runtime may lazily create a static,
+network-free starter repository and bind the Site-owned logical base revision
+to an immutable Git ref. Every later job resolves its exact base through that
+ref; a missing `site.change` base fails closed and never recreates the project.
+The model never receives the project repository or a `.git` control file.
+After the model turn, Runtime captures bounded regular files through
+handle-bound canonical containment checks, validates the exact frozen bytes,
+builds the exact Git tree through a private temporary index, creates a
+Runtime-owned commit, and writes a CAS-only immutable ref. Its candidate ID is domain-separated by
+tenant, project, base commit and final tree and has the form
+`revision:sha256:<64 lowercase hex>`. Only Site can accept that candidate and
+make it the next canonical base.
+When `checks.run` is granted, the adapter emits a Runtime-owned static check
+receipt bound to the frozen workspace SHA-256; candidate-controlled scripts are
+never executed. Build sessions hard-deny `exec` and `process`, and V1 rejects
+jobs requesting `command.execute` or `packages.install`. When `preview.manage`
+is granted, a candidate is accepted only when the same frozen snapshot contains
+a bounded HTML preview artifact that can be found and hashed.
 
 ```powershell
 npm ci
@@ -35,6 +50,14 @@ and their frozen schemas.
 It returns fail-closed typed diagnostics when the Gateway or project checkout
 is unavailable. A worker candidate remains non-authoritative until
 `sajtagent-site` has verified and persisted it.
+
+The live V1 revision store is intentionally limited: immutable Git refs live
+in one Sprite-local project repository. Losing that volume makes subsequent
+changes fail closed because there is not yet a remote bundle or restore
+journal. Job-result idempotency and artifact-read authorization are also
+process-memory state, so a Runtime restart before artifact acceptance requires
+a new authorized build. This is a controlled V1 durability gap, not a promise
+of production recovery.
 
 The adapter persists its own Ed25519 Gateway client identity beneath
 `SITEAGENT_OPENCLAW_CLIENT_STATE_DIR`. Pair that exact local client once with
@@ -186,8 +209,9 @@ It must never contain OpenClaw tool names or raw Gateway configuration. The
 runtime adapter compiles it fail-closed into one session, workspace, sandbox,
 and tool-policy snapshot.
 
-Use OpenClaw native tools for ordinary file reads, writes, patches, command
-execution, checks, and browser inspection. Add product MCP tools only when a
+Use OpenClaw native tools for ordinary file reads, writes, patches, and browser
+inspection. Runtime owns static checks; host command execution and package
+installation are unavailable in V1. Add product MCP tools only when a
 real missing capability is demonstrated, such as a typed preview receipt or
 package-policy decision.
 
@@ -198,9 +222,9 @@ model unless the turn's server-owned allowlist grants `build.request`. Its
 execution has no product side effects; Runtime stops on the upstream
 `tool.started` event and Site owns every authoritative build action after it.
 
-Tool policy is not a substitute for isolation. An allowed shell can write
-wherever its host filesystem permits, so the assigned worker must remain in a
-secret-free isolated workspace with an external network allowlist.
+Tool policy is not a substitute for isolation. A future arbitrary-code builder
+requires a disposable sandbox or VM that is torn down before capture; it must
+not weaken V1's hard denial of host command execution.
 
 ## Authorization before cloud use
 

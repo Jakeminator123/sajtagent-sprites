@@ -2,11 +2,8 @@ import { GatewayClient } from "@openclaw/gateway-client"
 import type { EventFrame } from "@openclaw/gateway-protocol"
 import { GATEWAY_CLIENT_CAPS } from "@openclaw/gateway-protocol/client-info"
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version"
-import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
-import { promisify } from "node:util"
 
 import {
   WorkerReportV1Schema,
@@ -30,13 +27,9 @@ import {
 import { createRuntimeGatewayHostDepsV1 } from "./openclaw-device.ts"
 import {
   WorkspacePreparationError,
-  findPreviewArtifactV1,
-  inspectBuildWorkspaceV1,
   prepareBuildWorkspaceV1,
-  type PreparedBuildWorkspaceV1,
+  recordBuildWorkspaceCandidateV1,
 } from "./workspace.ts"
-
-const execFileAsync = promisify(execFile)
 
 type GatewayRequestClient = Pick<GatewayClient, "request">
 
@@ -348,45 +341,9 @@ function buildPrompt(job: BuildJobV1, route: OpenClawModelRouteV1): string {
     `Nätverk: ${JSON.stringify(policy.network)}. Paket: ${JSON.stringify(policy.packages)}.`,
     `Policybudgetar: max ${policy.maxSteps} steg, ${policy.maxToolCalls} verktygsanrop, ${policy.maxModelTokens} modelltokens och ${policy.maxCostMicros} mikrodollar.`,
     `Den hårda körtidsdeadlinen är ${policy.deadlineAt}. Avsluta tidigare om någon annan policybudget riskerar att överskridas.`,
-    "Kör relevanta kontroller om checks.run är tillåtet. Gör inga commits, pushar, deployer eller externa meddelanden.",
+    "Kör inga projektkommandon eller bakgrundsprocesser. Runtime verifierar den frysta kandidaten själv. Gör inga commits, pushar, deployer eller externa meddelanden.",
     "Avsluta med en kort saklig sammanfattning. Resonemangsblock ska inte visas.",
   ].join("\n")
-}
-
-async function runWorkspaceCheckV1(
-  workspace: PreparedBuildWorkspaceV1,
-  timeoutMs: number,
-): Promise<EvidenceReceiptV1> {
-  const startedAt = new Date().toISOString()
-  const packageJson = JSON.parse(
-    await readFile(`${workspace.workerDir}/package.json`, "utf8"),
-  ) as { scripts?: Record<string, string> }
-  if (!packageJson.scripts?.check) {
-    throw new Error("Projektet saknar ett runtime-verifierbart npm-script med namnet check.")
-  }
-  const { stdout, stderr } = await execFileAsync("npm", ["run", "check"], {
-    cwd: workspace.workerDir,
-    encoding: "utf8",
-    timeout: Math.max(1_000, Math.min(timeoutMs, 5 * 60_000)),
-    maxBuffer: 2 * 1024 * 1024,
-    windowsHide: true,
-    env: {
-      PATH: process.env.PATH || "",
-      CI: "1",
-      HOME: "/tmp",
-      npm_config_cache: `/tmp/sajtagent-npm-${workspace.workspaceId}`,
-    },
-  })
-  const summary = `${stdout}\n${stderr}`.trim().replace(/\s+/gu, " ").slice(0, 1_500)
-  return {
-    receiptId: `check:npm:${workspace.workspaceId}`,
-    category: "check",
-    name: "npm run check",
-    status: "passed",
-    startedAt,
-    finishedAt: new Date().toISOString(),
-    summary: summary || "npm run check slutfördes utan fel.",
-  }
 }
 
 export function compileSessionPermissionModeV1(
@@ -395,7 +352,6 @@ export function compileSessionPermissionModeV1(
   const capabilities = new Set(job.executionPolicy.capabilities)
   if (
     capabilities.has("command.execute") ||
-    capabilities.has("checks.run") ||
     capabilities.has("packages.install")
   ) {
     return "workspace"
@@ -404,6 +360,63 @@ export function compileSessionPermissionModeV1(
     return "guarded"
   }
   return "read-only"
+}
+
+export function compileBuildWorkspaceToolPolicyV1(): {
+  inheritedToolPolicyVersion: 1
+  inheritedToolDeny: string[]
+} {
+  return {
+    inheritedToolPolicyVersion: 1,
+    inheritedToolDeny: ["exec", "process"],
+  }
+}
+
+export function createBuildWorkspaceSessionParamsV1(input: {
+  sessionKey: string
+  idempotencyKey: string
+  label: string
+  model: string
+  thinkingLevel: string
+  permissionMode: "read-only" | "guarded" | "workspace"
+  webSearch: boolean
+  cwd: string
+}) {
+  return {
+    key: input.sessionKey,
+    idempotencyKey: input.idempotencyKey,
+    agentId: "main",
+    label: input.label,
+    category: "sajtagent-build",
+    parentSessionKey: OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+    spawnDepth: 1,
+    model: input.model,
+    thinkingLevel: input.thinkingLevel,
+    permissionMode: input.permissionMode,
+    toolOverrides: { webSearch: input.webSearch },
+    visibility: "draft",
+    cwd: input.cwd,
+  }
+}
+
+export function patchBuildWorkspaceSessionParamsV1(input: {
+  sessionKey: string
+  model: string
+  thinkingLevel: string
+  reasoningLevel: string
+  permissionMode: "read-only" | "guarded" | "workspace"
+}) {
+  return {
+    key: input.sessionKey,
+    agentId: "main",
+    model: input.model,
+    thinkingLevel: input.thinkingLevel,
+    reasoningLevel: input.reasoningLevel,
+    permissionMode: input.permissionMode,
+    sendPolicy: "deny",
+    responseUsage: "tokens",
+    ...compileBuildWorkspaceToolPolicyV1(),
+  }
 }
 
 export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentTurnRunnerV1 {
@@ -805,6 +818,17 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
     if (Date.now() >= Date.parse(job.executionPolicy.deadlineAt)) {
       return failureReport(job, "job_deadline_elapsed", "BuildJobV1 har passerat sin exekveringsdeadline.", false, undefined, "timed_out")
     }
+    if (
+      job.executionPolicy.capabilities.includes("command.execute") ||
+      job.executionPolicy.capabilities.includes("packages.install")
+    ) {
+      return failureReport(
+        job,
+        "runtime_host_execution_not_supported",
+        "Runtime V1 tillåter inte hostkommandon eller paketinstallation i byggjobb.",
+        false,
+      )
+    }
 
     let workspace
     try {
@@ -829,33 +853,52 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
 
     try {
       return await this.withClient(async (client) => {
-        await client.request("sessions.create", {
-          key: sessionKey,
-          idempotencyKey: `session:${job.idempotencyKey}`,
-          agentId: "main",
-          label: `Sajtagent build ${job.jobId}`,
-          category: "sajtagent-build",
-          model: route.model,
-          thinkingLevel: route.thinkingLevel,
-          permissionMode,
-          toolOverrides: {
+        const parentResolved = await client.request<SessionResolveResult>(
+          "sessions.resolve",
+          {
+            key: OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+            agentId: "main",
+            includeGlobal: false,
+            allowMissing: true,
+          },
+        )
+        if (parentResolved.ok !== true) {
+          await client.request("sessions.create", {
+            key: OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+            idempotencyKey: "session:sajtagent-controller-v1",
+            agentId: "main",
+            label: "Sajtagent controller v1",
+            category: "sajtagent-controller",
+            permissionMode: "read-only",
+            toolOverrides: { webSearch: false },
+            visibility: "draft",
+          })
+        }
+        await client.request(
+          "sessions.create",
+          createBuildWorkspaceSessionParamsV1({
+            sessionKey,
+            idempotencyKey: `session:${job.idempotencyKey}`,
+            label: `Sajtagent build ${job.jobId}`,
+            model: route.model,
+            thinkingLevel: route.thinkingLevel,
+            permissionMode,
             webSearch:
               job.executionPolicy.capabilities.includes("browser.inspect") &&
               job.executionPolicy.network.mode === "allowlist",
-          },
-          visibility: "draft",
-          cwd: workspace.workerDir,
-        })
-        await client.request("sessions.patch", {
-          key: sessionKey,
-          agentId: "main",
-          model: route.model,
-          thinkingLevel: route.thinkingLevel,
-          reasoningLevel: route.reasoningVisibility,
-          permissionMode,
-          sendPolicy: "deny",
-          responseUsage: "tokens",
-        })
+            cwd: workspace.workerDir,
+          }),
+        )
+        await client.request(
+          "sessions.patch",
+          patchBuildWorkspaceSessionParamsV1({
+            sessionKey,
+            model: route.model,
+            thinkingLevel: route.thinkingLevel,
+            reasoningLevel: route.reasoningVisibility,
+            permissionMode,
+          }),
+        )
         const accepted = await client.request<AgentAcceptance>("agent", {
           message: buildPrompt(job, route),
           agentId: "main",
@@ -895,32 +938,43 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           )
         }
 
-        const inspected = await inspectBuildWorkspaceV1(workspace)
-        if (inspected.changedPaths.length === 0) {
+        const receipts: EvidenceReceiptV1[] = []
+        const checkStartedAt = new Date().toISOString()
+        let candidateProjection
+        try {
+          candidateProjection = await recordBuildWorkspaceCandidateV1(workspace, {
+            tenantId: job.tenantId,
+            projectId: job.projectId,
+          })
+        } catch (error) {
           return failureReport(
             job,
-            "worker_no_changes",
-            diagnosticText(waited.terminalReply) || "OpenClaw slutförde körningen men skapade ingen kandidatändring.",
-            false,
+            error instanceof WorkspacePreparationError
+              ? error.code
+              : "workspace_candidate_record_failed",
+            error instanceof WorkspacePreparationError
+              ? error.message
+              : "Kandidatens immutable Git-projektion kunde inte registreras.",
+            error instanceof WorkspacePreparationError
+              ? error.retryable
+              : true,
             accepted.runId,
           )
         }
-        const receipts: EvidenceReceiptV1[] = []
         if (job.executionPolicy.capabilities.includes("checks.run")) {
-          try {
-            receipts.push(await runWorkspaceCheckV1(workspace, timeoutMs))
-          } catch (error) {
-            return failureReport(
-              job,
-              "worker_check_failed",
-              error instanceof Error ? error.message.slice(0, 1_500) : "Projektkontrollen misslyckades.",
-              false,
-              accepted.runId,
-            )
-          }
+          receipts.push({
+            receiptId: `check:static:${workspace.workspaceId}`,
+            category: "check",
+            name: "Runtime-owned static validation",
+            status: "passed",
+            startedAt: checkStartedAt,
+            finishedAt: new Date().toISOString(),
+            summary: candidateProjection.check.summary,
+            evidenceRef: `workspace-snapshot:sha256:${candidateProjection.check.snapshotSha256}`,
+          })
         }
         const preview = job.executionPolicy.capabilities.includes("preview.manage")
-          ? await findPreviewArtifactV1(workspace)
+          ? candidateProjection.preview
           : null
         if (job.executionPolicy.capabilities.includes("preview.manage") && !preview) {
           return failureReport(
@@ -938,8 +992,8 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           jobId: job.jobId,
           sourceRunId: sourceRunId(job, accepted.runId),
           baseRevisionId: job.baseRevisionId,
-          candidateRevisionId: inspected.candidateRevisionId,
-          changedPaths: inspected.changedPaths,
+          candidateRevisionId: candidateProjection.candidateRevisionId,
+          changedPaths: candidateProjection.changedPaths,
           artifacts: [
             {
               kind: "diff",

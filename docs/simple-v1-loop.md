@@ -1,7 +1,6 @@
 # V1: one continuous agent, one verified truth
 
-Status: accepted product loop. The site implementation is local until the
-private runtime ingress and artifact-transfer boundary are ratified.
+Status: accepted product loop with a controlled live V1 runtime boundary.
 
 ## The simple rule
 
@@ -57,13 +56,19 @@ deployment, runtime and orchestration are not dependencies of this loop.
 4. If OpenClaw requests mutation, Site validates mandate, credits and revision,
    then sends one HMAC-signed `BuildJobV1` to a healthy private runtime.
 5. The runtime returns one Zod-validated `WorkerReportV1` synchronously.
-6. A candidate must be bound to the same job and base revision. It must have
+6. A first signed `site.create` may bootstrap a static starter repository.
+   Later jobs must resolve the Site-owned logical base through an existing
+   immutable Git ref; missing bases fail closed.
+7. Runtime runs checks, commits the final tree, and creates a CAS-only candidate
+   ref whose `revision:sha256` ID is bound to tenant, project, base commit and
+   final tree.
+8. A candidate must be bound to the same job and base revision. It must have
    exactly one HTML preview artifact with SHA-256, a passed preview receipt
    referring to that artifact and the checks required by job policy.
-7. SiteAgent materializes and hashes the preview bytes, checks preview health,
+9. SiteAgent materializes and hashes the preview bytes, checks preview health,
    then atomically persists the revision, version, opaque preview reference
    and final `job.succeeded` event.
-8. Any mismatch produces one terminal `job.failed`; no partial version is
+10. Any mismatch produces one terminal `job.failed`; no partial version is
    visible.
 
 Receipt display names are not policy identifiers. Acceptance uses typed
@@ -79,6 +84,15 @@ SiteAgent mints its own opaque preview reference after materialization.
 The authenticated preview response is owner-, tenant-, project- and
 revision-bound, `no-store`, size-limited and served with an isolating CSP. The
 Builder iframe also uses a sandbox without same-origin privileges.
+
+## Controlled V1 durability
+
+Accepted revisions currently have one Sprite-local Git copy. There is no
+remote Git bundle, volume-loss restore path or persistent Runtime replay
+journal yet. Volume loss, or a restart between worker completion and artifact
+acceptance, therefore fails closed instead of silently rebuilding a different
+base. Those recovery mechanisms are required before calling the revision store
+production-durable.
 
 ## Configuration
 

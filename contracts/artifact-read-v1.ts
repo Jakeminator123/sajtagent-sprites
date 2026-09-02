@@ -14,6 +14,10 @@ const IdentifierV1Schema = z
   .max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
 
+export const CandidateRevisionIdV1Schema = z
+  .string()
+  .regex(/^revision:sha256:[a-f0-9]{64}$/)
+
 const TimestampV1Schema = z.string().datetime({ offset: true })
 const OpaqueRefV1Schema = z.string().min(1).max(512)
 const Sha256V1Schema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -35,7 +39,7 @@ export const ArtifactReadBindingV1Schema = z
     jobId: IdentifierV1Schema,
     baseRevisionId: IdentifierV1Schema,
     sourceRunId: IdentifierV1Schema,
-    candidateRevisionId: IdentifierV1Schema,
+    candidateRevisionId: CandidateRevisionIdV1Schema,
     reportedAt: TimestampV1Schema,
   })
   .strict()
