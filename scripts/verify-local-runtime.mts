@@ -37,6 +37,7 @@ import {
   deriveAgentTurnSessionCreateIdempotencyKeyV1,
   deriveAgentTurnSessionLabelV1,
   deriveAgentTurnSessionKeyV1,
+  findBuildRequestToolCallIdInHistoryV1,
   hasRegisteredBuildRequestToolV1,
   OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
   type BuildJobRunnerV1,
@@ -820,6 +821,36 @@ try {
       },
     },
   }, buildNormalizerContext), /openclaw_duplicate_build_request/)
+
+  const transcriptBuildRequestToolCallId =
+    findBuildRequestToolCallIdInHistoryV1([
+      {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          name: "siteagent_build_request",
+          id: "transcript-build-call",
+        }],
+      },
+      {
+        role: "toolResult",
+        toolName: "siteagent_build_request",
+        toolCallId: "transcript-build-call",
+      },
+    ])
+  assert.match(transcriptBuildRequestToolCallId || "", /^tool:[A-Za-z0-9_-]{24}$/)
+  assert.equal(findBuildRequestToolCallIdInHistoryV1([
+    { role: "assistant", content: [{ type: "text", text: "ingen handoff" }] },
+  ]), undefined)
+  assert.throws(() => findBuildRequestToolCallIdInHistoryV1([
+    {
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "siteagent_build_request", id: "one" },
+        { type: "toolCall", name: "build.request", toolCallId: "two" },
+      ],
+    },
+  ]), /openclaw_duplicate_build_request/)
 
   const createdAt = new Date()
   const expiresAt = new Date(createdAt.getTime() + 10 * 60_000)

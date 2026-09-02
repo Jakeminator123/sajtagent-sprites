@@ -85,11 +85,15 @@ its SSE stream immediately after this exact last event:
 tool.started { capability: "build.request", toolCallId, safeLabel }
 ```
 
-Runtime best-effort aborts the upstream OpenClaw run after that frame. It does
-not mint a BuildJob, emit `build.started` or `tool.completed`, produce a
-preview, or claim product success. Site derives the authorized intent from the
-singleton `allowedMutationIntent` plus the original signed turn, dispatches
-the BuildJob, and appends the remaining authoritative AgentEvents.
+Runtime best-effort aborts the upstream OpenClaw run when that live frame is
+available. OpenClaw 2026.8 may persist a plugin tool call without forwarding
+its live tool frame to a backend client; Runtime then reads only the
+cursor-bounded history delta for the accepted turn and accepts exactly one
+matching tool call. It does not mint a BuildJob, emit `build.started` or
+`tool.completed`, produce a preview, or claim product success. Site derives
+the authorized intent from the singleton `allowedMutationIntent` plus the
+original signed turn, dispatches the BuildJob, and appends the remaining
+authoritative AgentEvents.
 
 Event IDs are deterministic for turn, sequence and type. Site validates and
 persists all events and owns the session-global sequence.

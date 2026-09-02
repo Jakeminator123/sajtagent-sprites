@@ -78,6 +78,12 @@ type SessionResolveResult = {
   ok?: boolean
 }
 
+type ChatHistoryResult = {
+  kind?: unknown
+  messages?: unknown
+  deltaCursor?: unknown
+}
+
 export type RuntimeGatewayHealthV1 = {
   connected: boolean
   runtimeVersion?: string
@@ -128,6 +134,46 @@ export function hasRegisteredBuildRequestToolV1(
     ) === true
   ) === true
   return pluginReady && toolReady
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+export function findBuildRequestToolCallIdInHistoryV1(
+  messages: unknown,
+): string | undefined {
+  if (!Array.isArray(messages)) return undefined
+  const rawToolCallIds: string[] = []
+  for (const messageValue of messages) {
+    const message = objectRecord(messageValue)
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue
+    for (const partValue of message.content) {
+      const part = objectRecord(partValue)
+      if (part?.type !== "toolCall") continue
+      const name = typeof part.name === "string" ? part.name.trim().toLowerCase() : ""
+      if (name !== OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1 && name !== "build.request") continue
+      const rawToolCallId = typeof part.toolCallId === "string"
+        ? part.toolCallId
+        : typeof part.id === "string"
+          ? part.id
+          : ""
+      if (!rawToolCallId) throw new Error("openclaw_build_request_history_missing_tool_call_id")
+      rawToolCallIds.push(rawToolCallId)
+    }
+  }
+  if (rawToolCallIds.length > 1) {
+    throw new Error("openclaw_duplicate_build_request")
+  }
+  const rawToolCallId = rawToolCallIds[0]
+  if (!rawToolCallId) return undefined
+  const digest = createHash("sha256")
+    .update(rawToolCallId)
+    .digest("base64url")
+    .slice(0, 24)
+  return `tool:${digest}`
 }
 
 async function probeBuildRequestToolV1(
@@ -521,6 +567,22 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
         sendPolicy: "deny",
         responseUsage: "tokens",
       })
+      let buildRequestHistoryCursor: string | undefined
+      if (buildRequestEnabled) {
+        const historyBaseline = await client.request<ChatHistoryResult>(
+          "chat.history",
+          {
+            sessionKey,
+            agentId: "main",
+            limit: 1,
+            maxChars: 10_000,
+          },
+        )
+        if (typeof historyBaseline.deltaCursor !== "string") {
+          throw new Error("openclaw_build_request_history_cursor_missing")
+        }
+        buildRequestHistoryCursor = historyBaseline.deltaCursor
+      }
       const accepted = await client.request<AgentAcceptance>("agent", {
         message: input.turn.message,
         agentId: "main",
@@ -621,6 +683,36 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           },
         })
         return { outcome: "terminal" }
+      }
+      if (buildRequestEnabled && buildRequestHistoryCursor) {
+        const historyDelta = await client.request<ChatHistoryResult>(
+          "chat.history",
+          {
+            sessionKey,
+            agentId: "main",
+            cursor: buildRequestHistoryCursor,
+            limit: 50,
+            maxChars: 100_000,
+          },
+        )
+        if (historyDelta.kind === "reset") {
+          throw new Error("openclaw_build_request_history_cursor_reset")
+        }
+        const transcriptToolCallId = findBuildRequestToolCallIdInHistoryV1(
+          historyDelta.messages,
+        )
+        if (transcriptToolCallId) {
+          emitOnce({
+            type: "tool.started",
+            occurredAt: new Date().toISOString(),
+            payload: {
+              toolCallId: transcriptToolCallId,
+              capability: "build.request",
+              safeLabel: OPENCLAW_BUILD_REQUEST_TOOL_NAME_V1,
+            },
+          })
+          return { outcome: "build_handoff", toolCallId: transcriptToolCallId }
+        }
       }
       if (messageEventCount === 0) {
         emitOnce({
