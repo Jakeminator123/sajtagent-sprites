@@ -372,6 +372,10 @@ export function compileBuildWorkspaceToolPolicyV1(): {
   }
 }
 
+export function deriveBuildWorkspaceSessionKeyV1(workspaceId: string): string {
+  return `agent:main:subagent:sajtagent-build-${workspaceId}`
+}
+
 export function createBuildWorkspaceSessionParamsV1(input: {
   sessionKey: string
   idempotencyKey: string
@@ -843,7 +847,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       return failureReport(job, "workspace_prepare_failed", "Det isolerade bygg-workspacet kunde inte förberedas.", true)
     }
 
-    const sessionKey = `agent:main:sajtagent-build-${workspace.workspaceId}`
+    const sessionKey = deriveBuildWorkspaceSessionKeyV1(workspace.workspaceId)
     const permissionMode = compileSessionPermissionModeV1(job)
     const timeoutMs = Math.max(
       1_000,

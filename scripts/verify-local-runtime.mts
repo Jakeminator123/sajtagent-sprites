@@ -41,6 +41,7 @@ import {
   compileSessionPermissionModeV1,
   compileBuildWorkspaceToolPolicyV1,
   createBuildWorkspaceSessionParamsV1,
+  deriveBuildWorkspaceSessionKeyV1,
   deriveAgentTurnSessionCreateIdempotencyKeyV1,
   deriveAgentTurnSessionLabelV1,
   deriveAgentTurnSessionKeyV1,
@@ -108,8 +109,10 @@ assert.deepEqual(compileBuildWorkspaceToolPolicyV1(), {
   inheritedToolPolicyVersion: 1,
   inheritedToolDeny: ["exec", "process"],
 })
+const buildSessionKey = deriveBuildWorkspaceSessionKeyV1("protocol-test")
+assert.match(buildSessionKey, /^agent:main:subagent:sajtagent-build-/u)
 const buildSessionCreateParams = createBuildWorkspaceSessionParamsV1({
-  sessionKey: "agent:main:sajtagent-build-protocol-test",
+  sessionKey: buildSessionKey,
   idempotencyKey: "session:build-protocol-test",
   label: "Sajtagent build protocol test",
   model: "openai/gpt-5.6-terra",
