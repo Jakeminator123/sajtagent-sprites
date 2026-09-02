@@ -31,6 +31,15 @@ V1. A separate credential-input flow is required before they can be exposed.
 envelope for one subordinate build. OpenClaw session keys, sandbox, MCP and
 tool-policy configuration remain private adapter details.
 
+## Agent profile activation
+
+`agent-profile-activation-v1.ts` is the signed Site-to-Runtime activation
+boundary. Site sends a validated profile with server-created activation and
+idempotency identifiers. Runtime applies its host ceiling, rejects stale
+revisions, materializes only the known OpenClaw profile files, and returns a
+hash-bound receipt that takes effect on the next run. Compiling or storing a
+browser draft is not activation.
+
 ## Verification
 
 ```powershell

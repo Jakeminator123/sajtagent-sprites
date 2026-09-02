@@ -9,6 +9,10 @@ import {
   DEFAULT_LOCAL_AGENT_CEILING_V1,
 } from "../contracts/agent-profile-v1.ts"
 import {
+  AGENT_PROFILE_ACTIVATION_PATH_V1,
+  AgentProfileActivationReceiptV1Schema,
+} from "../contracts/agent-profile-activation-v1.ts"
+import {
   AgentEventV1Schema,
   validateAgentTurnAgainstPolicyV1,
 } from "../contracts/agent-session-v1.ts"
@@ -103,6 +107,10 @@ try {
 } finally {
   await rm(profileOutput, { recursive: true, force: true })
 }
+const activationWorkspace = await mkdtemp(
+  join(tmpdir(), "siteagent-openclaw-active-profile-"),
+)
+await materializeOpenClawProfileV1({ outputDir: activationWorkspace })
 const server = createRuntimeServer({
   host: "127.0.0.1",
   port: 0,
@@ -110,6 +118,7 @@ const server = createRuntimeServer({
   allowedOrigins: [allowedOrigin],
   ceiling: DEFAULT_LOCAL_AGENT_CEILING_V1,
   turnRunner: fakeTurnRunner,
+  openClawWorkspaceDir: activationWorkspace,
 })
 
 await new Promise<void>((resolve, reject) => {
@@ -134,6 +143,8 @@ try {
     agentTurnStreamEnabled: boolean
     agentTurnCapabilities: string[]
     artifactReadEnabled: boolean
+    agentProfileActivationContractVersion: number
+    agentProfileActivationEnabled: boolean
   }
   assert.equal(healthBody.openClawConnected, false)
   assert.equal(healthBody.agentSessionContractVersion, 1)
@@ -141,6 +152,8 @@ try {
   assert.equal(healthBody.agentTurnStreamEnabled, true)
   assert.deepEqual(healthBody.agentTurnCapabilities, ["conversation.respond"])
   assert.equal(healthBody.artifactReadEnabled, false)
+  assert.equal(healthBody.agentProfileActivationContractVersion, 1)
+  assert.equal(healthBody.agentProfileActivationEnabled, true)
 
   const blockedOrigin = await fetch(`${baseUrl}/health`, {
     headers: { Origin: "https://attacker.example" },
@@ -170,6 +183,122 @@ try {
     body: JSON.stringify({ profile: { schemaVersion: 1 } }),
   })
   assert.equal(invalidProfile.status, 400)
+
+  const activatedProfile = {
+    ...structuredClone(DEFAULT_AGENT_PROFILE_V1),
+    revision: 2,
+    updatedAt: new Date().toISOString(),
+    identity: {
+      ...DEFAULT_AGENT_PROFILE_V1.identity,
+      name: "Aktiverad Sajtagent",
+    },
+  }
+  const activationRequest = {
+    schemaVersion: 1 as const,
+    activationId: "activation:local-test-2",
+    idempotencyKey: "activation-idempotency:local-test-2",
+    requestedAt: new Date().toISOString(),
+    expectedActiveRevision: 1,
+    profile: activatedProfile,
+  }
+  const activationBody = JSON.stringify(activationRequest)
+  const unsignedActivation = await fetch(
+    `${baseUrl}${AGENT_PROFILE_ACTIVATION_PATH_V1}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: activationBody,
+    },
+  )
+  assert.equal(unsignedActivation.status, 401)
+
+  const activated = await fetch(
+    `${baseUrl}${AGENT_PROFILE_ACTIVATION_PATH_V1}`,
+    {
+      method: "POST",
+      headers: signedRuntimeHeaders(
+        AGENT_PROFILE_ACTIVATION_PATH_V1,
+        activationBody,
+      ),
+      body: activationBody,
+    },
+  )
+  assert.equal(activated.status, 200)
+  const activationReceipt = AgentProfileActivationReceiptV1Schema.parse(
+    await activated.json(),
+  )
+  assert.equal(activationReceipt.profileId, activatedProfile.profileId)
+  assert.equal(activationReceipt.revision, 2)
+  assert.equal(activationReceipt.takesEffect, "next-run")
+  assert.match(
+    await readFile(join(activationWorkspace, "SOUL.md"), "utf8"),
+    /Aktiverad Sajtagent/,
+  )
+
+  const repeatedActivation = await fetch(
+    `${baseUrl}${AGENT_PROFILE_ACTIVATION_PATH_V1}`,
+    {
+      method: "POST",
+      headers: signedRuntimeHeaders(
+        AGENT_PROFILE_ACTIVATION_PATH_V1,
+        activationBody,
+      ),
+      body: activationBody,
+    },
+  )
+  assert.equal(repeatedActivation.status, 200)
+  const repeatedReceipt = AgentProfileActivationReceiptV1Schema.parse(
+    await repeatedActivation.json(),
+  )
+  assert.equal(repeatedReceipt.activatedAt, activationReceipt.activatedAt)
+
+  const conflictingActivationBody = JSON.stringify({
+    ...activationRequest,
+    profile: {
+      ...activatedProfile,
+      revision: 3,
+      operatingInstructions: "Annat innehåll med återanvänd idempotencyKey.",
+    },
+  })
+  const conflictingActivation = await fetch(
+    `${baseUrl}${AGENT_PROFILE_ACTIVATION_PATH_V1}`,
+    {
+      method: "POST",
+      headers: signedRuntimeHeaders(
+        AGENT_PROFILE_ACTIVATION_PATH_V1,
+        conflictingActivationBody,
+      ),
+      body: conflictingActivationBody,
+    },
+  )
+  assert.equal(conflictingActivation.status, 409)
+
+  const staleActivationBody = JSON.stringify({
+    ...activationRequest,
+    activationId: "activation:local-test-stale",
+    idempotencyKey: "activation-idempotency:local-test-stale",
+    expectedActiveRevision: 1,
+    profile: {
+      ...activatedProfile,
+      revision: 3,
+    },
+  })
+  const staleActivation = await fetch(
+    `${baseUrl}${AGENT_PROFILE_ACTIVATION_PATH_V1}`,
+    {
+      method: "POST",
+      headers: signedRuntimeHeaders(
+        AGENT_PROFILE_ACTIVATION_PATH_V1,
+        staleActivationBody,
+      ),
+      body: staleActivationBody,
+    },
+  )
+  assert.equal(staleActivation.status, 409)
+  assert.equal(
+    (await staleActivation.json() as { activeRevision?: number }).activeRevision,
+    2,
+  )
 
   const sessionCreatedAt = new Date()
   const turnPolicyExpiresAt = new Date(sessionCreatedAt.getTime() + 10 * 60_000)
@@ -474,11 +603,14 @@ try {
   })
   assert.equal(replayed.status, 409)
 
-  console.log("PASS local runtime: signed fail-closed flow and Luna/Terra/Sol routing")
+  console.log(
+    "PASS local runtime: profile activation, signed fail-closed flow and Luna/Terra/Sol routing",
+  )
 } finally {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
   })
+  await rm(activationWorkspace, { recursive: true, force: true })
 }
 
 const artifactTestRoot = await mkdtemp(join(tmpdir(), "siteagent-artifact-read-"))

@@ -4,10 +4,10 @@ Status: accepted runtime baseline, 2026-09-01.
 
 ## Runtime adapter and local profile compiler
 
-The runtime has four surfaces: a local profile compiler, a signed
-`BuildJobV1` adapter, a signed continuous-agent turn stream for an OpenClaw
-Gateway, and a signed private reader for preview bytes authorized by a
-candidate report. The exact local-only turn ingress is documented in
+The runtime has five surfaces: a local profile compiler, a signed profile
+activation route, a signed `BuildJobV1` adapter, a signed continuous-agent turn
+stream for an OpenClaw Gateway, and a signed private reader for preview bytes
+authorized by a candidate report. The exact local-only turn ingress is documented in
 [`private-agent-turn-ingress-v1.md`](./private-agent-turn-ingress-v1.md). The
 artifact reader is documented in
 [`private-artifact-read-v1.md`](./private-artifact-read-v1.md). The
@@ -26,8 +26,9 @@ npm run dev:runtime
 ```
 
 The default listener is `http://127.0.0.1:4317`. `GET /health` and local
-`POST /v1/agent-profiles/compile` need no credential. `POST /v1/build-jobs`,
-`POST /v1/agent-turns`, and `POST /v1/artifacts/read` always need
+`POST /v1/agent-profiles/compile` need no credential. `POST
+/v1/agent-profiles/activate`, `POST /v1/build-jobs`, `POST /v1/agent-turns`,
+and `POST /v1/artifacts/read` always need
 `SITEAGENT_RUNTIME_SIGNING_KEY` and
 validate timestamp, nonce, signature, expiry, idempotency, workspace revision,
 and their frozen schemas.
@@ -72,6 +73,16 @@ The compiler emits `SOUL.md`, `AGENTS.md`, `profiles/openclaw.yml`, and a
 structured host configuration. These are portable inputs, not proof that the
 host granted every requested capability. The effective policy is always the
 intersection of the profile request and the server-owned host ceiling.
+
+Agent Studio activates a compiled profile through the signed private
+`POST /v1/agent-profiles/activate` route. The Site controller creates the
+activation and idempotency identifiers; the browser never signs or calls the
+Runtime directly. Runtime validates the profile against the host ceiling,
+rejects stale revisions, replaces only the known profile files beneath
+`SITEAGENT_OPENCLAW_WORKSPACE_DIR`, and returns a receipt with the effective
+policy and bundle SHA-256. The receipt applies to the next OpenClaw run;
+already-running turns keep their existing prompt snapshot. Browser localStorage
+remains a draft and import/export cache, not active runtime state.
 
 Materialize the default profile, or an Agent Studio export, into a concrete
 OpenClaw workspace with:

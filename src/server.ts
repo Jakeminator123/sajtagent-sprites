@@ -9,6 +9,12 @@ import {
   type AgentHostCeilingV1,
 } from "../contracts/agent-profile-v1.ts"
 import {
+  AGENT_PROFILE_ACTIVATION_CONTRACT_VERSION_V1,
+  AGENT_PROFILE_ACTIVATION_PATH_V1,
+  AgentProfileActivationRequestV1Schema,
+  MAX_AGENT_PROFILE_ACTIVATION_REQUEST_BYTES_V1,
+} from "../contracts/agent-profile-activation-v1.ts"
+import {
   BuildJobV1Schema,
   WorkerReportV1Schema,
   type BuildJobV1,
@@ -53,6 +59,10 @@ import {
   readAuthorizedPreviewArtifactV1,
   type AuthorizedPreviewArtifactV1,
 } from "./artifact-reader.ts"
+import {
+  AgentProfileActivationErrorV1,
+  AgentProfileActivatorV1,
+} from "./activate-profile.ts"
 
 const MAX_BODY_BYTES = 512 * 1024
 const MIN_RUNTIME_SIGNING_KEY_CHARACTERS = 32
@@ -81,6 +91,7 @@ export type RuntimeServerOptions = {
   projectsRoot?: string
   workersRoot?: string
   openClawClientStateDir?: string
+  openClawWorkspaceDir?: string
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -180,6 +191,9 @@ export function resolveRuntimeServerOptions(
     openClawClientStateDir:
       env.SITEAGENT_OPENCLAW_CLIENT_STATE_DIR?.trim() ||
       "/home/sprite/.config/sajtagent/openclaw-client",
+    openClawWorkspaceDir:
+      env.SITEAGENT_OPENCLAW_WORKSPACE_DIR?.trim() ||
+      "/workspace/sajtagent-openclaw/workspace",
   }
 }
 
@@ -201,6 +215,11 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
     string,
     { bodyDigest: string; expiresAt: number }
   >()
+  const profileActivator = new AgentProfileActivatorV1({
+    outputDir:
+      options.openClawWorkspaceDir || "/workspace/sajtagent-openclaw/workspace",
+    ceiling: options.ceiling,
+  })
 
   function artifactAuthorizationKey(
     binding: ArtifactReadBindingV1,
@@ -422,6 +441,9 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
             artifactReadEnabled: Boolean(
               signedPrivateRoutesEnabled && artifactReaderAvailable,
             ),
+            agentProfileActivationContractVersion:
+              AGENT_PROFILE_ACTIVATION_CONTRACT_VERSION_V1,
+            agentProfileActivationEnabled: signedPrivateRoutesEnabled,
           },
           corsHeaders,
         )
@@ -446,6 +468,72 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
         const profile = AgentProfileV1Schema.parse(input.profile)
         const bundle = compilePortableOpenClawBundleV1(profile, options.ceiling)
         sendJson(response, 200, bundle, corsHeaders)
+        return
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === AGENT_PROFILE_ACTIVATION_PATH_V1 &&
+        url.search === ""
+      ) {
+        const contentType = request.headers["content-type"]
+        if (
+          typeof contentType !== "string" ||
+          contentType.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
+        ) {
+          sendJson(response, 400, { error: "invalid_request" }, corsHeaders)
+          return
+        }
+        let body: string
+        try {
+          body = await readBody(
+            request,
+            MAX_AGENT_PROFILE_ACTIVATION_REQUEST_BYTES_V1,
+          )
+        } catch {
+          sendJson(response, 413, { error: "invalid_request" }, corsHeaders)
+          return
+        }
+        const signed = requireSignature(
+          request,
+          AGENT_PROFILE_ACTIVATION_PATH_V1,
+          body,
+        )
+        if (!signed.ok) {
+          sendJson(
+            response,
+            signed.status,
+            { error: "unauthorized", message: signed.reason },
+            corsHeaders,
+          )
+          return
+        }
+        const input = AgentProfileActivationRequestV1Schema.parse(
+          JSON.parse(body),
+        )
+        const requestDigest = createHash("sha256").update(body).digest("hex")
+        try {
+          const receipt = await profileActivator.activate(input, requestDigest)
+          sendJson(response, 200, receipt, corsHeaders)
+        } catch (error) {
+          if (error instanceof AgentProfileActivationErrorV1) {
+            const status = error.code.includes("conflict") ? 409 : 503
+            sendJson(
+              response,
+              status,
+              {
+                error: error.code,
+                message: error.message,
+                ...(error.activeRevision === undefined
+                  ? {}
+                  : { activeRevision: error.activeRevision }),
+              },
+              corsHeaders,
+            )
+            return
+          }
+          throw error
+        }
         return
       }
 
