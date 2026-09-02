@@ -760,8 +760,21 @@ export function createRuntimeServer(options: RuntimeServerOptions) {
           payload: { acceptedAt },
         })
         try {
-          await turnRunner.runTurn(input, (event) => emitter.emit(event))
-          if (!emitter.terminal) {
+          const result = await turnRunner.runTurn(
+            input,
+            (event) => emitter.emit(event),
+          )
+          if (result.outcome === "build_handoff") {
+            const lastEvent = emitter.lastEvent
+            if (
+              emitter.terminal ||
+              lastEvent?.type !== "tool.started" ||
+              lastEvent.payload.capability !== "build.request" ||
+              lastEvent.payload.toolCallId !== result.toolCallId
+            ) {
+              throw new Error("agent_turn_invalid_build_handoff")
+            }
+          } else if (!emitter.terminal) {
             emitter.emit({
               type: "turn.failed",
               payload: {

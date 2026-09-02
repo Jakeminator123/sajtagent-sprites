@@ -16,10 +16,11 @@ import {
 import type { OpenClawModelRouteV1 } from "./model-routing.ts"
 import { routeAgentTurnModelV1 } from "./model-routing.ts"
 import {
-  compileConversationOnlyOpenClawToolPolicyV1,
+  compileAgentTurnOpenClawToolPolicyV1,
   createOpenClawAgentNormalizerStateV1,
   normalizeOpenClawGatewayEventV1,
   type AgentEventDraftV1,
+  type AgentTurnRunResultV1,
   type AgentTurnRunnerV1,
   type RuntimeAgentTurnIngressV1,
 } from "./agent-turn.ts"
@@ -281,7 +282,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
   async runTurn(
     input: RuntimeAgentTurnIngressV1,
     emit: (event: AgentEventDraftV1) => void,
-  ): Promise<void> {
+  ): Promise<AgentTurnRunResultV1> {
     const timeoutMs = Math.max(
       1_000,
       Math.min(15 * 60_000, Date.parse(input.policy.expiresAt) - Date.now()),
@@ -293,11 +294,17 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       .digest("base64url")
       .slice(0, 32)
     const sessionKey = `agent:main:sajtagent-session-${sessionDigest}`
+    const buildRequestEnabled = input.policy.capabilities.includes("build.request")
     const normalizerState = createOpenClawAgentNormalizerStateV1()
     let acceptedRunId: string | undefined
     let terminalEmitted = false
     let messageEventCount = 0
     let eventFailure: Error | undefined
+    let handoffToolCallId: string | undefined
+    let resolveBuildHandoff: ((toolCallId: string) => void) | undefined
+    const buildHandoff = new Promise<string>((resolve) => {
+      resolveBuildHandoff = resolve
+    })
     const pendingFrames: EventFrame[] = []
 
     const emitOnce = (event: AgentEventDraftV1) => {
@@ -307,7 +314,12 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       terminalEmitted = event.type === "turn.completed" || event.type === "turn.failed"
     }
     const consumeFrame = (frame: EventFrame) => {
-      if (!acceptedRunId || terminalEmitted) return
+      if (
+        !acceptedRunId ||
+        terminalEmitted ||
+        handoffToolCallId ||
+        eventFailure
+      ) return
       try {
         for (const event of normalizeOpenClawGatewayEventV1(frame, {
           runId: acceptedRunId,
@@ -316,6 +328,14 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
           state: normalizerState,
         })) {
           emitOnce(event)
+          if (
+            event.type === "tool.started" &&
+            event.payload.capability === "build.request"
+          ) {
+            handoffToolCallId = event.payload.toolCallId
+            resolveBuildHandoff?.(handoffToolCallId)
+            break
+          }
         }
       } catch (error) {
         eventFailure = error instanceof Error ? error : new Error("openclaw_event_normalization_failed")
@@ -330,7 +350,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       consumeFrame(frame)
     }
 
-    await this.withClient(async (client) => {
+    return await this.withClient(async (client) => {
       const resolved = await client.request<SessionResolveResult>("sessions.resolve", {
         key: sessionKey,
         agentId: "main",
@@ -356,7 +376,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
         thinkingLevel: route.thinkingLevel,
         reasoningLevel: route.reasoningVisibility,
         permissionMode: "read-only",
-        ...compileConversationOnlyOpenClawToolPolicyV1(),
+        ...compileAgentTurnOpenClawToolPolicyV1(input.policy.capabilities),
         sendPolicy: "deny",
         responseUsage: "tokens",
       })
@@ -373,7 +393,16 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
         extraSystemPrompt: [
           "Du är den kontinuerliga SiteAgenten i Sajtagent Builder.",
           "Svara direkt i dialogen. Detta är inte ett dolt BuildJob.",
-          "Denna första privata ingress stöder endast conversation.respond: använd inga verktyg och gör inga ändringar.",
+          ...(buildRequestEnabled
+            ? [
+                "Du får inte läsa, skriva, köra kommandon, kontroller, shell eller browser i denna tur.",
+                "Det enda tillåtna verktyget är ett enda siteagent_build_request (alias build.request), och endast när användaren faktiskt ber om en sajtändring.",
+                `Den enda servergodkända mutationsintentionen är ${input.policy.allowedMutationIntents[0]}.`,
+                "Verktygsanropet är bara en överlämning till Site. Påstå aldrig att bygget, previewn eller produkten är klar.",
+              ]
+            : [
+                "Denna privata ingress stöder endast conversation.respond: använd inga verktyg och gör inga ändringar.",
+              ]),
           `Turens serverutfärdade klockslag: ${input.policy.issuedAt}.`,
           `Projektbindning: ${input.session.projectId}. Basrevision: ${input.policy.baseRevisionId}.`,
           `Serverägd budget: ${input.policy.maxModelTokens} modelltokens och ${input.policy.maxCostMicros} mikrodollar.`,
@@ -391,13 +420,32 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       acceptedRunId = accepted.runId
       for (const frame of pendingFrames.splice(0)) consumeFrame(frame)
 
-      const waited = await client.request<AgentWaitResult>(
+      const waitOperation = client.request<AgentWaitResult>(
         "agent.wait",
         { runId: accepted.runId, timeoutMs },
         { timeoutMs: timeoutMs + 5_000 },
       )
+      const waitOutcome = buildRequestEnabled
+        ? await Promise.race([
+            waitOperation.then((waited) => ({ kind: "wait" as const, waited })),
+            buildHandoff.then((toolCallId) => ({
+              kind: "build_handoff" as const,
+              toolCallId,
+            })),
+          ])
+        : { kind: "wait" as const, waited: await waitOperation }
+      if (waitOutcome.kind === "build_handoff") {
+        await client.request("chat.abort", {
+          sessionKey,
+          agentId: "main",
+          runId: accepted.runId,
+          preserveSideRuns: false,
+        }).catch(() => undefined)
+        return { outcome: "build_handoff", toolCallId: waitOutcome.toolCallId }
+      }
+      const waited = waitOutcome.waited
       if (eventFailure) throw eventFailure
-      if (terminalEmitted) return
+      if (terminalEmitted) return { outcome: "terminal" }
       if (waited.status === "timeout" || waited.status === "timed_out") {
         emitOnce({
           type: "turn.failed",
@@ -407,7 +455,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
             retryable: true,
           },
         })
-        return
+        return { outcome: "terminal" }
       }
       if (waited.status === "cancelled") {
         emitOnce({
@@ -418,7 +466,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
             retryable: true,
           },
         })
-        return
+        return { outcome: "terminal" }
       }
       if (waited.status !== "completed" && waited.status !== "ok") {
         emitOnce({
@@ -429,7 +477,7 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
             retryable: true,
           },
         })
-        return
+        return { outcome: "terminal" }
       }
       if (messageEventCount === 0) {
         emitOnce({
@@ -440,10 +488,11 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
             retryable: true,
           },
         })
-        return
+        return { outcome: "terminal" }
       }
       emitOnce({ type: "agent.status", payload: { state: "idle" } })
       emitOnce({ type: "turn.completed", payload: { outcome: "answered" } })
+      return { outcome: "terminal" }
     }, onEvent)
   }
 
