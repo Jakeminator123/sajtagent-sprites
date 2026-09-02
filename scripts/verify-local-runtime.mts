@@ -34,6 +34,7 @@ import {
 } from "../src/model-routing.ts"
 import {
   compileSessionPermissionModeV1,
+  deriveAgentTurnSessionKeyV1,
   hasRegisteredBuildRequestToolV1,
   type BuildJobRunnerV1,
 } from "../src/openclaw-gateway.ts"
@@ -133,6 +134,15 @@ assert.equal(hasRegisteredBuildRequestToolV1(
     }],
   },
 ), false)
+const privateAgentTurnSessionKey = deriveAgentTurnSessionKeyV1(
+  "project:test",
+  "session:abcdefghijklmnopqrstuvwxyzABCDEF",
+)
+assert.match(
+  privateAgentTurnSessionKey,
+  /^agent:main:subagent:sajtagent-session-[A-Za-z0-9_-]{32}$/,
+)
+assert.doesNotMatch(privateAgentTurnSessionKey, /project:test|abcdefghijkl/)
 let fakeBuildRequestToolRegistered = true
 const fakeTurnRunner = {
   async health() {
