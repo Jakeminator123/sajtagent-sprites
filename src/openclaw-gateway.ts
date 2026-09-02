@@ -195,7 +195,7 @@ export function deriveAgentTurnSessionKeyV1(
     .update(`${projectId}\n${sessionId}`)
     .digest("base64url")
     .slice(0, 32)
-  return `agent:main:subagent:sajtagent-session-${sessionDigest}`
+  return `agent:main:subagent:sajtagent-session-v2-${sessionDigest}`
 }
 
 export function deriveAgentTurnSessionLabelV1(
@@ -203,8 +203,11 @@ export function deriveAgentTurnSessionLabelV1(
   sessionId: string,
 ): string {
   const sessionKey = deriveAgentTurnSessionKeyV1(projectId, sessionId)
-  return `Sajtagent session ${sessionKey.slice(-32)}`
+  return `Sajtagent session v2 ${sessionKey.slice(-32)}`
 }
+
+export const OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1 =
+  "agent:main:sajtagent-controller-v1"
 
 function buildPrompt(job: BuildJobV1, route: OpenClawModelRouteV1): string {
   const policy = job.executionPolicy
@@ -453,6 +456,27 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
       ) {
         throw new Error("openclaw_build_request_tool_not_registered")
       }
+      const parentResolved = await client.request<SessionResolveResult>(
+        "sessions.resolve",
+        {
+          key: OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+          agentId: "main",
+          includeGlobal: false,
+          allowMissing: true,
+        },
+      )
+      if (parentResolved.ok !== true) {
+        await client.request("sessions.create", {
+          key: OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+          idempotencyKey: "session:sajtagent-controller-v1",
+          agentId: "main",
+          label: "Sajtagent controller v1",
+          category: "sajtagent-controller",
+          permissionMode: "read-only",
+          toolOverrides: { webSearch: false },
+          visibility: "draft",
+        })
+      }
       const resolved = await client.request<SessionResolveResult>("sessions.resolve", {
         key: sessionKey,
         agentId: "main",
@@ -469,6 +493,8 @@ export class OpenClawGatewayBuildJobRunnerV1 implements BuildJobRunnerV1, AgentT
             input.session.sessionId,
           ),
           category: "sajtagent-session",
+          parentSessionKey: OPENCLAW_AGENT_TURN_PARENT_SESSION_KEY_V1,
+          spawnDepth: 1,
           permissionMode: "read-only",
           toolOverrides: { webSearch: false },
           visibility: "draft",
