@@ -59,11 +59,18 @@ import {
 import { materializeOpenClawProfileV1 } from "../src/materialize-profile.ts"
 import {
   candidateRevisionIdV1,
+  findPreviewArtifactV1,
   inspectBuildWorkspaceV1,
   parseGitStatusPathsV1,
   prepareBuildWorkspaceV1,
   recordBuildWorkspaceCandidateV1,
 } from "../src/workspace.ts"
+import {
+  buildSelfContainedPreviewV1,
+  RUNTIME_PREVIEW_ARTIFACT_PATH_V1,
+  SelfContainedPreviewErrorV1,
+} from "../src/static-preview.ts"
+import { parseAuthorizedPreviewRefV1 } from "../src/artifact-reader.ts"
 import {
   MAX_AGENT_EVENT_SSE_BYTES_V1,
   MAX_AGENT_TURN_EVENTS_V1,
@@ -266,6 +273,109 @@ assert.deepEqual(parseGitStatusPathsV1(" M index.html\n?? preview.html"), [
   "index.html",
   "preview.html",
 ])
+const bundledPreview = buildSelfContainedPreviewV1(
+  [
+    {
+      path: "index.html",
+      bytes: Buffer.from(`<!doctype html>
+<html><head>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="assets/logo.svg">
+</head><body>
+  <img data-src="lazy.svg" src="assets/logo.svg" alt="Logo">
+  <source srcset="data:image/svg+xml;base64,PHN2Zy8+ 1x, assets/logo.svg 2x">
+  <script data-src="lazy.js">globalThis.lazy = true</script>
+  <script src="script.js" defer></script>
+</body></html>`),
+    },
+    {
+      path: "style.css",
+      bytes: Buffer.from(`body { background-image: url("assets/logo.svg"); color: #123; }`),
+    },
+    {
+      path: "script.js",
+      bytes: Buffer.from(`globalThis.previewReady = "</script>"`),
+    },
+    {
+      path: "assets/logo.svg",
+      bytes: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>`),
+    },
+  ],
+  "index.html",
+  MAX_PREVIEW_ARTIFACT_BYTES_V1,
+).toString("utf8")
+assert.doesNotMatch(bundledPreview, /<link[^>]+rel="stylesheet"/iu)
+assert.doesNotMatch(bundledPreview, /<script\b[^>]*\ssrc\s*=/iu)
+assert.match(bundledPreview, /<style data-siteagent-inline="style\.css">/u)
+assert.match(bundledPreview, /data:image\/svg\+xml;base64,/u)
+assert.match(bundledPreview, /data-siteagent-inline="script\.js"/u)
+assert(
+  bundledPreview.indexOf(`data-siteagent-inline="script.js"`) >
+    bundledPreview.indexOf(`<img data-src="lazy.svg"`),
+)
+assert.match(bundledPreview, /<\\\/script>/u)
+assert.match(bundledPreview, /data-src="lazy\.svg"/u)
+assert.match(bundledPreview, /<script data-src="lazy\.js">/u)
+assert.doesNotMatch(bundledPreview, /srcset="[^"]*assets\/logo\.svg/u)
+assert.throws(
+  () => buildSelfContainedPreviewV1(
+    [{
+      path: "index.html",
+      bytes: Buffer.from(`<!doctype html><html><body><source srcset="data:image/svg+xml;base64,PHN2Zy8+ 1x, https://cdn.example/x.svg 2x"></body></html>`),
+    }],
+    "index.html",
+    MAX_PREVIEW_ARTIFACT_BYTES_V1,
+  ),
+  (error) => error instanceof SelfContainedPreviewErrorV1 && error.code === "external_resource",
+)
+assert.throws(
+  () => buildSelfContainedPreviewV1(
+    [{
+      path: "index.html",
+      bytes: Buffer.from(`<!doctype html><html><head><link rel="stylesheet" href="https://cdn.example/x.css"></head><body></body></html>`),
+    }],
+    "index.html",
+    MAX_PREVIEW_ARTIFACT_BYTES_V1,
+  ),
+  (error) => error instanceof SelfContainedPreviewErrorV1 && error.code === "external_resource",
+)
+assert.throws(
+  () => buildSelfContainedPreviewV1(
+    [{
+      path: "index.html",
+      bytes: Buffer.from(`<!doctype html><html><body><img src="missing.svg"></body></html>`),
+    }],
+    "index.html",
+    MAX_PREVIEW_ARTIFACT_BYTES_V1,
+  ),
+  (error) => error instanceof SelfContainedPreviewErrorV1 && error.code === "missing_resource",
+)
+assert.throws(
+  () => buildSelfContainedPreviewV1(
+    [{
+      path: "index.html",
+      bytes: Buffer.from(`<!doctype html><html><body>too large</body></html>`),
+    }],
+    "index.html",
+    16,
+  ),
+  (error) => error instanceof SelfContainedPreviewErrorV1 && error.code === "preview_too_large",
+)
+assert.deepEqual(
+  parseAuthorizedPreviewRefV1(
+    `sprite-worktree:${"a".repeat(32)}:${RUNTIME_PREVIEW_ARTIFACT_PATH_V1}`,
+  ),
+  {
+    workspaceId: "a".repeat(32),
+    relativePath: RUNTIME_PREVIEW_ARTIFACT_PATH_V1,
+  },
+)
+assert.equal(
+  parseAuthorizedPreviewRefV1(`sprite-worktree:${"a".repeat(32)}:index.html`)
+    ?.relativePath,
+  "index.html",
+)
+console.log("PASS self-contained preview: local resources inline and unsafe references fail closed")
 const allowedOrigin = "http://localhost:3000"
 assert(
   resolveRuntimeServerOptions({}).allowedOrigins.includes("http://127.0.0.1:3147"),
@@ -1134,7 +1244,18 @@ try {
   )
   assert.match(firstProjection.candidateRevisionId, /^revision:sha256:[a-f0-9]{64}$/u)
   assert.deepEqual(firstProjection.changedPaths, ["index.html", "package.json"])
-  assert.equal(firstProjection.preview?.path, "index.html")
+  assert.equal(firstProjection.preview?.path, RUNTIME_PREVIEW_ARTIFACT_PATH_V1)
+  assert.match(
+    await readFile(
+      join(initialWorkspace.workerDir, RUNTIME_PREVIEW_ARTIFACT_PATH_V1),
+      "utf8",
+    ),
+    /Första accepterade bygget/u,
+  )
+  assert.deepEqual(
+    await findPreviewArtifactV1(initialWorkspace),
+    firstProjection.preview,
+  )
   assert.match(firstProjection.check.snapshotSha256, /^[a-f0-9]{64}$/u)
   await assert.rejects(
     readFile(join(initialWorkspace.workerDir, "runtime-check-marker")),
@@ -1159,6 +1280,9 @@ try {
   assert.equal(
     await readFile(join(secondWorkspace.workerDir, "index.html"), "utf8"),
     firstCandidateHtml,
+  )
+  await assert.rejects(
+    readFile(join(secondWorkspace.workerDir, RUNTIME_PREVIEW_ARTIFACT_PATH_V1)),
   )
   assert.notEqual(secondWorkspace.workerDir, initialWorkspace.workerDir)
 
@@ -1186,12 +1310,12 @@ const artifactTestRoot = await mkdtemp(join(tmpdir(), "siteagent-artifact-read-"
 const workersRoot = join(artifactTestRoot, "workers")
 const workspaceId = "a".repeat(32)
 const workerDir = join(workersRoot, workspaceId)
-const previewPath = join(workerDir, "index.html")
+const previewPath = join(workerDir, RUNTIME_PREVIEW_ARTIFACT_PATH_V1)
 const previewBytes = Buffer.from(
   "<!doctype html><html><body>verified preview</body></html>",
 )
 const previewSha256 = createHash("sha256").update(previewBytes).digest("hex")
-const previewRef = `sprite-worktree:${workspaceId}:index.html`
+const previewRef = `sprite-worktree:${workspaceId}:${RUNTIME_PREVIEW_ARTIFACT_PATH_V1}`
 const sourceRunId = "openclaw:artifact-read-test"
 
 await mkdir(workerDir, { recursive: true })
@@ -1395,7 +1519,10 @@ try {
   const readResponse = await firstRead.json()
   const validatedRead = validateArtifactReadResponseV1(readRequest, readResponse)
   assert.equal(validatedRead.success, true)
-  assert.equal(validatedRead.response.artifact.relativePath, "index.html")
+  assert.equal(
+    validatedRead.response.artifact.relativePath,
+    RUNTIME_PREVIEW_ARTIFACT_PATH_V1,
+  )
   assert.deepEqual(
     Buffer.from(validatedRead.response.artifact.bytesBase64, "base64"),
     previewBytes,

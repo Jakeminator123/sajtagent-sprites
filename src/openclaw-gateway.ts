@@ -341,6 +341,7 @@ function buildPrompt(job: BuildJobV1, route: OpenClawModelRouteV1): string {
     `Nätverk: ${JSON.stringify(policy.network)}. Paket: ${JSON.stringify(policy.packages)}.`,
     `Policybudgetar: max ${policy.maxSteps} steg, ${policy.maxToolCalls} verktygsanrop, ${policy.maxModelTokens} modelltokens och ${policy.maxCostMicros} mikrodollar.`,
     `Den hårda körtidsdeadlinen är ${policy.deadlineAt}. Avsluta tidigare om någon annan policybudget riskerar att överskridas.`,
+    "Använd endast lokala filer för CSS, JavaScript, bilder och typsnitt; inga CDN- eller andra externa renderingsresurser. Runtime skapar en separat självbärande preview.",
     "Kör inga projektkommandon eller bakgrundsprocesser. Runtime verifierar den frysta kandidaten själv. Gör inga commits, pushar, deployer eller externa meddelanden.",
     "Avsluta med en kort saklig sammanfattning. Resonemangsblock ska inte visas.",
   ].join("\n")

@@ -16,7 +16,13 @@ import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 
+import { MAX_PREVIEW_ARTIFACT_BYTES_V1 } from "../contracts/artifact-read-v1.ts"
 import type { BuildJobV1 } from "../contracts/builder-v1.ts"
+import {
+  buildSelfContainedPreviewV1,
+  RUNTIME_PREVIEW_ARTIFACT_PATH_V1,
+  SelfContainedPreviewErrorV1,
+} from "./static-preview.ts"
 
 const execFileAsync = promisify(execFile)
 const MAX_CANDIDATE_FILES_V1 = 5_000
@@ -103,6 +109,12 @@ type GitTreeEntryV1 = {
 type FrozenStaticCheckV1 = {
   snapshotSha256: string
   summary: string
+}
+
+type FrozenPreviewV1 = {
+  sourcePath: string
+  bytes: Buffer
+  sha256: string
 }
 
 function stableId(value: string): string {
@@ -648,6 +660,7 @@ async function captureWorkspaceFilesV1(workerDir: string): Promise<CapturedFileV
         )
       }
       const path = relativeDir ? `${relativeDir}/${entry.name}` : entry.name
+      if (path === RUNTIME_PREVIEW_ARTIFACT_PATH_V1) continue
       assertPortablePathV1(path)
       const absolutePath = join(workerDir, path)
       await requireContainedPath(workerDir, absolutePath)
@@ -746,7 +759,7 @@ async function snapshotWorkspaceV1(
 ): Promise<{
   entries: GitTreeEntryV1[]
   changedPaths: string[]
-  preview: { path: string; sha256: string } | null
+  preview: FrozenPreviewV1 | null
   check: FrozenStaticCheckV1
 }> {
   const files = await captureWorkspaceFilesV1(workspace.workerDir)
@@ -788,16 +801,13 @@ async function snapshotWorkspaceV1(
     })
     .sort()
   const fileByPath = new Map(files.map((file) => [file.path, file]))
-  let preview: { path: string; sha256: string } | null = null
+  let previewSourcePath: string | null = null
   for (const path of ["dist/index.html", "build/index.html", "index.html"]) {
     const file = fileByPath.get(path)
     if (!file) continue
     const text = file.bytes.toString("utf8").toLowerCase()
     if (!text.includes("<html") && !text.includes("<!doctype html")) continue
-    preview = {
-      path,
-      sha256: createHash("sha256").update(file.bytes).digest("hex"),
-    }
+    previewSourcePath = path
     break
   }
   const packageJson = fileByPath.get("package.json")
@@ -820,14 +830,14 @@ async function snapshotWorkspaceV1(
       false,
     )
   }
-  if (!preview) {
+  if (!previewSourcePath) {
     throw new WorkspacePreparationError(
       "workspace_prepare_failed",
       "Den frysta statiska kandidaten saknar en verifierbar HTML-preview.",
       false,
     )
   }
-  const previewFile = fileByPath.get(preview.path)
+  const previewFile = fileByPath.get(previewSourcePath)
   const previewText = previewFile?.bytes.toString("utf8") || ""
   if (!/<html(?:\s|>)/iu.test(previewText) || !/<body(?:\s|>)/iu.test(previewText)) {
     throw new WorkspacePreparationError(
@@ -836,13 +846,35 @@ async function snapshotWorkspaceV1(
       false,
     )
   }
+  let previewBytes: Buffer
+  try {
+    previewBytes = buildSelfContainedPreviewV1(
+      files,
+      previewSourcePath,
+      MAX_PREVIEW_ARTIFACT_BYTES_V1,
+    )
+  } catch (error) {
+    const code = error instanceof SelfContainedPreviewErrorV1
+      ? error.code
+      : "preview_bundle_failed"
+    throw new WorkspacePreparationError(
+      "workspace_prepare_failed",
+      `HTML-previewn kunde inte göras självbärande (${code}).`,
+      false,
+    )
+  }
+  const preview: FrozenPreviewV1 = {
+    sourcePath: previewSourcePath,
+    bytes: previewBytes,
+    sha256: createHash("sha256").update(previewBytes).digest("hex"),
+  }
   return {
     entries,
     changedPaths,
     preview,
     check: {
       snapshotSha256,
-      summary: `Runtime verifierade ${files.length} frysta filer och ${preview.path}.`,
+      summary: `Runtime verifierade ${files.length} frysta filer och skapade en självbärande preview från ${preview.sourcePath}.`,
     },
   }
 }
@@ -852,6 +884,80 @@ export async function inspectBuildWorkspaceV1(
 ): Promise<{ changedPaths: string[] }> {
   const snapshot = await snapshotWorkspaceV1(workspace, false)
   return { changedPaths: snapshot.changedPaths }
+}
+
+async function materializeRuntimePreviewArtifactV1(
+  workspace: PreparedBuildWorkspaceV1,
+  preview: FrozenPreviewV1,
+): Promise<{ path: typeof RUNTIME_PREVIEW_ARTIFACT_PATH_V1; sha256: string }> {
+  const artifactPath = join(workspace.workerDir, RUNTIME_PREVIEW_ARTIFACT_PATH_V1)
+  await requireContainedPath(workspace.workerDir, artifactPath)
+  let handle
+  let created = false
+  let completed = false
+  try {
+    handle = await open(artifactPath, "wx", 0o600)
+    created = true
+    await handle.writeFile(preview.bytes)
+    await handle.sync()
+    const stats = await handle.stat({ bigint: true })
+    if (
+      !stats.isFile() ||
+      stats.nlink !== 1n ||
+      stats.size !== BigInt(preview.bytes.byteLength)
+    ) {
+      throw new Error("runtime_preview_identity_mismatch")
+    }
+    completed = true
+  } catch (error) {
+    if (!created && (error as NodeJS.ErrnoException).code === "EEXIST") {
+      let existingHandle
+      try {
+        const linkStats = await lstat(artifactPath, { bigint: true })
+        if (!linkStats.isFile() || linkStats.isSymbolicLink()) {
+          throw new Error("runtime_preview_not_regular")
+        }
+        const flags = fsConstants.O_RDONLY |
+          (process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW)
+        existingHandle = await open(artifactPath, flags)
+        const before = await existingHandle.stat({ bigint: true })
+        const bytes = await existingHandle.readFile()
+        const after = await existingHandle.stat({ bigint: true })
+        completed =
+          before.isFile() &&
+          before.dev === linkStats.dev &&
+          before.ino === linkStats.ino &&
+          before.nlink === 1n &&
+          before.size === BigInt(preview.bytes.byteLength) &&
+          before.size === after.size &&
+          before.mtimeNs === after.mtimeNs &&
+          before.ctimeNs === after.ctimeNs &&
+          before.dev === after.dev &&
+          before.ino === after.ino &&
+          bytes.equals(preview.bytes)
+      } catch {
+        completed = false
+      } finally {
+        await existingHandle?.close().catch(() => undefined)
+      }
+    }
+  } finally {
+    await handle?.close().catch(() => undefined)
+    if (created && !completed) {
+      await rm(artifactPath, { force: true }).catch(() => undefined)
+    }
+  }
+  if (!completed) {
+    throw new WorkspacePreparationError(
+      "workspace_prepare_failed",
+      "Runtime kunde inte materialisera den självbärande previewn.",
+      false,
+    )
+  }
+  return {
+    path: RUNTIME_PREVIEW_ARTIFACT_PATH_V1,
+    sha256: preview.sha256,
+  }
 }
 
 export async function recordBuildWorkspaceCandidateV1(
@@ -872,6 +978,17 @@ export async function recordBuildWorkspaceCandidateV1(
       false,
     )
   }
+  if (!snapshot.preview) {
+    throw new WorkspacePreparationError(
+      "workspace_prepare_failed",
+      "Den frysta statiska kandidaten saknar en verifierbar HTML-preview.",
+      false,
+    )
+  }
+  const preview = await materializeRuntimePreviewArtifactV1(
+    workspace,
+    snapshot.preview,
+  )
   const indexPath = join(
     dirname(workspace.projectRepoDir),
     `.siteagent-index-${workspace.workspaceId}-${randomUUID()}`,
@@ -949,7 +1066,7 @@ export async function recordBuildWorkspaceCandidateV1(
       candidateCommit,
       candidateRevisionId,
       changedPaths: snapshot.changedPaths,
-      preview: snapshot.preview,
+      preview,
       check: snapshot.check,
     }
   } catch (error) {
@@ -976,5 +1093,7 @@ export function parseGitStatusPathsV1(porcelain: string): string[] {
 export async function findPreviewArtifactV1(
   workspace: PreparedBuildWorkspaceV1,
 ): Promise<{ path: string; sha256: string } | null> {
-  return (await snapshotWorkspaceV1(workspace, false)).preview
+  const preview = (await snapshotWorkspaceV1(workspace, false)).preview
+  if (!preview) return null
+  return materializeRuntimePreviewArtifactV1(workspace, preview)
 }
