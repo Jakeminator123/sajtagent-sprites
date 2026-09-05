@@ -32,7 +32,11 @@ receipt bound to the frozen workspace SHA-256; candidate-controlled scripts are
 never executed. Build sessions hard-deny `exec` and `process`, and V1 rejects
 jobs requesting `command.execute` or `packages.install`. When `preview.manage`
 is granted, a candidate is accepted only when the same frozen snapshot contains
-a bounded HTML preview artifact that can be found and hashed.
+a bounded HTML entrypoint. Runtime deterministically inlines its local CSS,
+JavaScript, images, fonts, and other render resources into a separate bounded
+`.siteagent-preview.html`; that Runtime-owned artifact is never included in the
+candidate Git tree. Missing, external, escaping, invalid, or oversized render
+resources fail closed.
 
 ```powershell
 npm ci

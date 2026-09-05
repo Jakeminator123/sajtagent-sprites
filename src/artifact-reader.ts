@@ -5,17 +5,20 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   MAX_PREVIEW_ARTIFACT_BYTES_V1,
   type ArtifactReadBindingV1,
+  type ArtifactReadResponseV1,
 } from "../contracts/artifact-read-v1.ts"
 
 const PREVIEW_REF_PATTERN =
-  /^sprite-worktree:([a-f0-9]{32}):(dist\/index\.html|build\/index\.html|index\.html)$/
+  /^sprite-worktree:([a-f0-9]{32}):(\.siteagent-preview\.html|dist\/index\.html|build\/index\.html|index\.html)$/
+
+type AuthorizedPreviewPathV1 = ArtifactReadResponseV1["artifact"]["relativePath"]
 
 export type AuthorizedPreviewArtifactV1 = {
   binding: ArtifactReadBindingV1
   artifact: {
     kind: "preview"
     ref: string
-    relativePath: "dist/index.html" | "build/index.html" | "index.html"
+    relativePath: AuthorizedPreviewPathV1
     mediaType: "text/html"
     sha256: string
   }
@@ -56,7 +59,8 @@ export function parseAuthorizedPreviewRefV1(
   const relativePath = matched?.[2]
   if (
     !workspaceId ||
-    (relativePath !== "dist/index.html" &&
+    (relativePath !== ".siteagent-preview.html" &&
+      relativePath !== "dist/index.html" &&
       relativePath !== "build/index.html" &&
       relativePath !== "index.html")
   ) {

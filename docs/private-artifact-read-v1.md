@@ -46,9 +46,12 @@ only preview artifact, and the Runtime-known relative path. Its lifetime ends
 at the earlier of job expiry or 24 hours. Missing state after a restart fails
 closed.
 
-The opaque ref remains opaque to Site. Runtime alone maps its own ref to one of
-`dist/index.html`, `build/index.html`, or `index.html`; the caller cannot send a
-filesystem path.
+The opaque ref remains opaque to Site. New build reports map it to the
+Runtime-owned `.siteagent-preview.html`, which contains only the deterministic
+self-contained rendering derived from the frozen candidate. Runtime keeps
+legacy reads for `dist/index.html`, `build/index.html`, and `index.html` so an
+in-flight report from the previous runtime revision can still complete. The
+caller cannot choose or send a filesystem path.
 
 ## Response
 
@@ -66,7 +69,7 @@ canonical base64 bytes:
   "artifact": {
     "kind": "preview",
     "ref": "opaque-runtime-reference",
-    "relativePath": "index.html",
+    "relativePath": ".siteagent-preview.html",
     "mediaType": "text/html",
     "sha256": "64-lowercase-hex",
     "sizeBytes": 1234,

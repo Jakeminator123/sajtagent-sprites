@@ -22,6 +22,7 @@ const TimestampV1Schema = z.string().datetime({ offset: true })
 const OpaqueRefV1Schema = z.string().min(1).max(512)
 const Sha256V1Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const PreviewRelativePathV1Schema = z.enum([
+  ".siteagent-preview.html",
   "dist/index.html",
   "build/index.html",
   "index.html",
